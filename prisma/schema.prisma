@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  AGENCY
+  BRAND
+  INFLUENCER
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  role      UserRole @default(BRAND)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  influencerProfile Influencer?
+  campaignsCreated  Campaign[]
+  messagesSent      Message[]   @relation("SentMessages")
+  messagesReceived  Message[]   @relation("ReceivedMessages")
+}
+
+model Influencer {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id])
+  platforms      String[] // ["tiktok", "instagram"]
+  followers      Int      @default(0)
+  engagementRate Float    @default(0.0)
+  categories     String[] // ["beauty", "gaming"]
+  bio            String?
+  profilePicture String?
+
+  // Relationships
+  campaigns CampaignParticipant[]
+}
+
+model Campaign {
+  id             String   @id @default(uuid())
+  name           String
+  objective      String?
+  productInfo    String?
+  targetAudience String?
+  brandIdentity  String?
+  budget         Float?
+  timeline       String?
+  kpi            String?
+  doAndDont      String?
+  status         String   @default("DRAFT") // DRAFT, ACTIVE, COMPLETED
+  
+  creatorId      String
+  creator        User     @relation(fields: [creatorId], references: [id])
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relationships
+  participants CampaignParticipant[]
+}
+
+model CampaignParticipant {
+  id           String   @id @default(uuid())
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id])
+  influencerId String
+  influencer   Influencer @relation(fields: [influencerId], references: [id])
+  status       String   @default("APPLIED") // APPLIED, APPROVED, REJECTED, COMPLETED
+  
+  joinedAt     DateTime @default(now())
+
+  @@unique([campaignId, influencerId])
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  content    String
+  senderId   String
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId String
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  createdAt  DateTime @default(now())
+
+  // To group by campaign if needed
+  campaignId String?
+}
