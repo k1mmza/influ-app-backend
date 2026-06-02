@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -17,81 +17,374 @@ enum UserRole {
   INFLUENCER
 }
 
+// USER & ACCOUNT MANAGEMENT
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  role      UserRole @default(BRAND)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                   String    @id @default(uuid())
+  name                 String?
+  email                String    @unique
+  password             String    // mapped from password_hash
+  role                 UserRole?
+  plan                 String?
+  profileCompleteness  Int       @default(0)
+  isRoleSelected       Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  // Relationships
-  influencerProfile Influencer?
-  campaignsCreated  Campaign[]
-  messagesSent      Message[]   @relation("SentMessages")
-  messagesReceived  Message[]   @relation("ReceivedMessages")
+  // Profiles
+  brandProfile      BrandProfile?
+  agencyProfile     AgencyProfile?
+  influencerProfile InfluencerProfile?
+
+  // User Related
+  wallet           Wallet?
+  notifications    Notification[]
+  sentReviews      Review[]       @relation("ReviewsFrom")
+  receivedReviews  Review[]       @relation("ReviewsTo")
+  messages         Message[]
 }
 
-model Influencer {
-  id             String   @id @default(uuid())
-  userId         String   @unique
-  user           User     @relation(fields: [userId], references: [id])
-  platforms      String[] // ["tiktok", "instagram"]
-  followers      Int      @default(0)
-  engagementRate Float    @default(0.0)
-  categories     String[] // ["beauty", "gaming"]
-  bio            String?
-  profilePicture String?
+model BrandProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  companyName   String?
+  position      String?
+  telephone     String?
+  companyDetail String?  @db.Text
+  websiteUrl    String?
+  socialLinks   Json?
+  updatedAt     DateTime @updatedAt
+
+  // Relationship to ClientBrand if this brand profile is linked
+  clientBrand   ClientBrand?
+}
+
+model AgencyProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  companyName   String?
+  position      String?
+  telephone     String?
+  companyDetail String?  @db.Text
+  websiteUrl    String?
+  socialLinks   Json?
+  updatedAt     DateTime @updatedAt
 
   // Relationships
-  campaigns CampaignParticipant[]
+  clientBrands  ClientBrand[]
+}
+
+model InfluencerProfile {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id])
+  bio                 String?  @db.Text
+  categories          Json?    // e.g. ["beauty", "lifestyle"]
+  styleTags           Json?
+  keywords            Json?
+  hashtags            Json?
+  availabilityStatus  String?
+  responseRate        Float?
+  avgResponseTimeHrs  Int?
+  performanceScore    Float?
+  qualityScore        Float?
+  growthRate          Float?
+  updatedAt           DateTime @updatedAt
+
+  // Influencer Related
+  platformAccounts   PlatformAccount[]
+  rateCards          RateCard[]
+  pastCollaborations PastCollaboration[]
+  applications       CampaignApplication[]
+  trackingResults    TrackingResult[]
+  shortlists         Shortlist[]
+  conversations      Conversation[]
+  payments           Payment[]
+}
+
+model ClientBrand {
+  id             String         @id @default(uuid())
+  agencyId       String
+  agency         AgencyProfile  @relation(fields: [agencyId], references: [id])
+  brandProfileId String?        @unique
+  brandProfile   BrandProfile?  @relation(fields: [brandProfileId], references: [id])
+  brandName      String
+  brandContact   String?
+  brandEmail     String?
+  brandWebsite   String?
+  isRegistered   Boolean        @default(false)
+  joinedAt       DateTime       @default(now())
+
+  // Relationships
+  campaigns      Campaign[]
+  shortlists     Shortlist[]
+  conversations  Conversation[]
+  payments       Payment[]
+}
+
+// USER RELATED
+model Wallet {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id])
+  balance           Float    @default(0)
+  pendingPayout     Float    @default(0)
+  totalEarned       Float    @default(0)
+  lastPaymentAmount Float?
+  lastPaymentAt     DateTime?
+  updatedAt         DateTime @updatedAt
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  type        String
+  title       String
+  body        String   @db.Text
+  referenceId String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+// INFLUENCER RELATED
+model PlatformAccount {
+  id                String            @id @default(uuid())
+  influencerId      String
+  influencer        InfluencerProfile @relation(fields: [influencerId], references: [id])
+  platform          String            // tiktok, instagram, etc.
+  handle            String
+  profileUrl        String?
+  followers         Int               @default(0)
+  avgViews          Int               @default(0)
+  engagementRate    Float             @default(0)
+  growthRate        Float             @default(0)
+  isPrimary         Boolean           @default(false)
+  syncedAt          DateTime          @default(now())
+
+  // Relationships
+  audienceInsights AudienceInsight[]
+  contentPreviews  ContentPreview[]
+}
+
+model AudienceInsight {
+  id                String          @id @default(uuid())
+  platformAccountId String
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id])
+  malePct           Float?
+  femalePct         Float?
+  ageDistribution   Json?
+}
+
+model RateCard {
+  id                 String            @id @default(uuid())
+  influencerId       String
+  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id])
+  pricePerPost       Float?
+  pricePerVideo      Float?
+  pricePerStory      Float?
+  packagePrice       Float?
+  packageDescription String?           @db.Text
+  updatedAt          DateTime          @updatedAt
+}
+
+model SubmittedContent {
+  id              String              @id @default(uuid())
+  applicationId   String
+  application     CampaignApplication @relation(fields: [applicationId], references: [id])
+  contentUrl      String
+  thumbnailUrl    String?
+  contentType     String?             // video, image, etc.
+  reviewStatus    String              @default("PENDING")
+  revisionNote    String?             @db.Text
+  submittedAt     DateTime            @default(now())
+  reviewedAt      DateTime?
+
+  // Relationships
+  trackingResults TrackingResult[]
+}
+
+// REVIEWS & FEEDBACK
+model ContentPreview {
+  id                String          @id @default(uuid())
+  platformAccountId String
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id])
+  thumbnailUrl      String?
+  contentUrl        String?
+  contentType       String?
+  views             Int             @default(0)
+  likes             Int             @default(0)
+  comments          Int             @default(0)
+  shares            Int             @default(0)
+  postedAt          DateTime?
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  fromUserId String
+  fromUser   User     @relation("ReviewsFrom", fields: [fromUserId], references: [id])
+  toUserId   String
+  toUser     User     @relation("ReviewsTo", fields: [toUserId], references: [id])
+  rating     Int
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now())
+}
+
+// CAMPAIGN MANAGEMENT
+model PastCollaboration {
+  id               String            @id @default(uuid())
+  influencerId     String
+  influencer       InfluencerProfile @relation(fields: [influencerId], references: [id])
+  campaignId       String?
+  campaign         Campaign?         @relation(fields: [campaignId], references: [id])
+  brandName        String
+  resultViews      Int?
+  resultEngagement Float?
+  completedAt      DateTime?
 }
 
 model Campaign {
-  id             String   @id @default(uuid())
+  id             String          @id @default(uuid())
+  clientBrandId  String
+  clientBrand    ClientBrand     @relation(fields: [clientBrandId], references: [id])
   name           String
   objective      String?
-  productInfo    String?
-  targetAudience String?
-  brandIdentity  String?
   budget         Float?
-  timeline       String?
-  kpi            String?
-  doAndDont      String?
-  status         String   @default("DRAFT") // DRAFT, ACTIVE, COMPLETED
-  
-  creatorId      String
-  creator        User     @relation(fields: [creatorId], references: [id])
-  
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  budgetSpent    Float           @default(0)
+  visibility     String?         // PUBLIC, PRIVATE
+  status         String          @default("DRAFT")
+  paymentType    String?
+  keyMessage     String?         @db.Text
+  doAndDont      String?         @db.Text
+  deliverables   String?         @db.Text
+  applyDeadline  DateTime?
+  submissionDate DateTime?
+  reviewDate     DateTime?
+  paymentDate    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   // Relationships
-  participants CampaignParticipant[]
+  requirements       CampaignRequirement[]
+  applications       CampaignApplication[]
+  smartPlanBriefs    SmartPlanBrief[]
+  trackingResults    TrackingResult[]
+  reviews            Review[]
+  pastCollaborations PastCollaboration[]
+  conversations      Conversation[]
+  payments           Payment[]
 }
 
-model CampaignParticipant {
-  id           String   @id @default(uuid())
-  campaignId   String
-  campaign     Campaign @relation(fields: [campaignId], references: [id])
-  influencerId String
-  influencer   Influencer @relation(fields: [influencerId], references: [id])
-  status       String   @default("APPLIED") // APPLIED, APPROVED, REJECTED, COMPLETED
-  
-  joinedAt     DateTime @default(now())
+model CampaignRequirement {
+  id                 String   @id @default(uuid())
+  campaignId         String
+  campaign           Campaign @relation(fields: [campaignId], references: [id])
+  minFollowers       Int?
+  minEngagementRate  Float?
+  minAvgViews        Int?
+  platforms          Json?
+  locations          Json?
+  categories         Json?
+  followerTier       String?
+  contentType        String?
+}
 
-  @@unique([campaignId, influencerId])
+model CampaignApplication {
+  id           String            @id @default(uuid())
+  campaignId   String
+  campaign     Campaign          @relation(fields: [campaignId], references: [id])
+  influencerId String
+  influencer   InfluencerProfile @relation(fields: [influencerId], references: [id])
+  status       String            @default("PENDING")
+  appliedAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  // Relationships
+  submittedContents SubmittedContent[]
+}
+
+model SmartPlanBrief {
+  id              String   @id @default(uuid())
+  campaignId      String
+  campaign        Campaign @relation(fields: [campaignId], references: [id])
+  createdBy       String   // User ID
+  requirementJson Json?
+  generatedBrief  String?  @db.Text
+  inputMode       String?  // AI, MANUAL
+  createdAt       DateTime @default(now())
+}
+
+model TrackingResult {
+  id                 String            @id @default(uuid())
+  campaignId         String
+  campaign           Campaign          @relation(fields: [campaignId], references: [id])
+  influencerId       String
+  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id])
+  submittedContentId String
+  submittedContent   SubmittedContent  @relation(fields: [submittedContentId], references: [id])
+  snapshotPeriod     String?           // DAILY, WEEKLY, etc.
+  views              Int               @default(0)
+  likes              Int               @default(0)
+  comments           Int               @default(0)
+  shares             Int               @default(0)
+  engagementRate     Float             @default(0)
+  recordedAt         DateTime          @default(now())
+}
+
+model Shortlist {
+  id            String            @id @default(uuid())
+  clientBrandId String
+  clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
+  influencerId  String
+  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id])
+  addedAt       DateTime          @default(now())
+}
+
+// COMMUNICATION
+model Conversation {
+  id            String            @id @default(uuid())
+  campaignId    String
+  campaign      Campaign          @relation(fields: [campaignId], references: [id])
+  clientBrandId String
+  clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
+  influencerId  String
+  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id])
+  workPhase     String?           // NEGOTIATION, EXECUTION, etc.
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  // Relationships
+  messages      Message[]
 }
 
 model Message {
-  id         String   @id @default(uuid())
-  content    String
-  senderId   String
-  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
-  receiverId String
-  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
-  createdAt  DateTime @default(now())
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id])
+  content        String       @db.Text
+  attachmentUrls Json?
+  isRead         Boolean      @default(false)
+  sentAt         DateTime     @default(now())
+}
 
-  // To group by campaign if needed
-  campaignId String?
+// PAYMENTS
+model Payment {
+  id             String            @id @default(uuid())
+  campaignId     String
+  campaign       Campaign          @relation(fields: [campaignId], references: [id])
+  clientBrandId  String
+  clientBrand    ClientBrand       @relation(fields: [clientBrandId], references: [id])
+  influencerId   String
+  influencer     InfluencerProfile @relation(fields: [influencerId], references: [id])
+  amount         Float
+  paymentType    String?
+  status         String            @default("PENDING")
+  transactionRef String?
+  paidAt         DateTime?
+  createdAt      DateTime          @default(now())
 }
