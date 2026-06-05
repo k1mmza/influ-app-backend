@@ -1,23 +1,21 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { UpdateBrandProfileDto } from './update-brand-profile.dto';
+import { UpdateInfluencerProfileDto } from './update-influencer-profile.dto';
 
 export class UpdateProfileDto {
+  // Shared — updates users table
   @IsOptional() @IsString() name?: string;
 
-  // Brand / Agency
-  @IsOptional() @IsString() companyName?: string;
-  @IsOptional() @IsString() position?: string;
-  @IsOptional() @IsString() telephone?: string;
-  @IsOptional() @IsString() companyDetail?: string;
-  @IsOptional() @IsString() websiteUrl?: string;
-  @IsOptional() socialLinks?: {
-    instagram?: string;
-    facebook?: string;
-    linkedin?: string;
-    tiktok?: string;
-  };
+  // Brand / Agency fields
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateBrandProfileDto)
+  profile?: UpdateBrandProfileDto;
 
-  // Influencer
-  @IsOptional() @IsString() bio?: string;
-  @IsOptional() categories?: string[];
-  @IsOptional() @IsString() availabilityStatus?: string;
+  // Influencer fields
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateInfluencerProfileDto)
+  influencerProfile?: UpdateInfluencerProfileDto;
 }

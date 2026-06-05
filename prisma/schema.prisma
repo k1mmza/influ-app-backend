@@ -29,6 +29,7 @@ model User {
   isRoleSelected       Boolean   @default(false)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
+  isDeleted            Boolean   @default(false)
 
   // Profiles
   brandProfile      BrandProfile?

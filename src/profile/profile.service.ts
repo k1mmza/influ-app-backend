@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
@@ -6,7 +10,138 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 export class ProfileService {
   constructor(private prisma: PrismaService) {}
 
+  // ─── GET PROFILE ─────────────────────────────────────────────────────────────
   async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        brandProfile: true,
+        agencyProfile: true,
+        influencerProfile: {
+          include: {
+            platformAccounts: {
+              include: { audienceInsights: true },
+            },
+            rateCards: true,
+            pastCollaborations: true,
+          },
+        },
+      },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    // Pick the right profile based on role
+    let profile: any = null;
+    if (user.role === 'BRAND') profile = user.brandProfile;
+    else if (user.role === 'AGENCY') profile = user.agencyProfile;
+    else if (user.role === 'INFLUENCER') profile = user.influencerProfile;
+
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      plan: user.plan,
+      profileCompleteness: user.profileCompleteness,
+      profile,
+    };
+  }
+
+  // ─── UPDATE PROFILE ───────────────────────────────────────────────────────────
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Update name on users table if provided
+      if (dto.name !== undefined) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { name: dto.name },
+        });
+      }
+
+      // 2. Update role-specific profile
+      if (user.role === 'BRAND' && dto.profile) {
+        await tx.agencyProfile.upsert({
+          where: { userId },
+          create: { userId, ...dto.profile, socialLinks: dto.profile.socialLinks as any },
+          update: { ...dto.profile, socialLinks: dto.profile.socialLinks as any },
+        });
+      }
+
+      if (user.role === 'AGENCY' && dto.profile) {
+        await tx.agencyProfile.upsert({
+          where: { userId },
+          create: { userId, ...dto.profile, socialLinks: dto.profile.socialLinks as any },
+          update: { ...dto.profile, socialLinks: dto.profile.socialLinks as any },
+        });
+      }
+
+      if (user.role === 'INFLUENCER' && dto.influencerProfile) {
+        const { rateCard, ...influencerFields } = dto.influencerProfile;
+
+        // 2a. Upsert influencer profile
+        const influencerProfile = await tx.influencerProfile.upsert({
+          where: { userId },
+          create: { userId, ...influencerFields },
+          update: influencerFields,
+        });
+
+        // 2b. Upsert rate card if provided
+        if (rateCard) {
+          const existing = await tx.rateCard.findFirst({
+            where: { influencerId: influencerProfile.id },
+          });
+
+          if (existing) {
+            await tx.rateCard.update({
+              where: { id: existing.id },
+              data: rateCard,
+            });
+          } else {
+            await tx.rateCard.create({
+              data: { influencerId: influencerProfile.id, ...rateCard },
+            });
+          }
+        }
+      }
+
+      // 3. Recalculate profile completeness after update
+      const completeness = await this.calculateCompleteness(userId, tx);
+      await tx.user.update({
+        where: { id: userId },
+        data: { profileCompleteness: completeness },
+      });
+    });
+
+    return this.getProfile(userId);
+  }
+
+  // ─── DELETE PROFILE (soft delete) ────────────────────────────────────────────
+  async deleteProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    // Soft delete — set isDeleted flag instead of removing the row
+    // This preserves campaign history, reviews, tracking results etc.
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { isDeleted: true },
+    });
+
+    return { message: 'Account deleted successfully' };
+  }
+
+  // ─── GET COMPLETENESS ─────────────────────────────────────────────────────────
+  async getCompleteness(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -20,77 +155,66 @@ export class ProfileService {
 
     if (!user) throw new NotFoundException('User not found');
 
-    const profile =
-      user.brandProfile ?? user.agencyProfile ?? user.influencerProfile ?? null;
-
-    return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      profileCompleteness: user.profileCompleteness,
-      profile,
-    };
+    const score = await this.calculateCompleteness(userId);
+    return { profileCompleteness: score };
   }
 
-  async updateProfile(userId: string, dto: UpdateProfileDto) {
-    const user = await this.prisma.user.findUnique({
+  // ─── PRIVATE: CALCULATE COMPLETENESS ─────────────────────────────────────────
+  private async calculateCompleteness(userId: string, tx?: any): Promise<number> {
+    const client = tx ?? this.prisma;
+
+    const user = await client.user.findUnique({
       where: { id: userId },
+      include: {
+        brandProfile: true,
+        agencyProfile: true,
+        influencerProfile: {
+          include: { platformAccounts: true, rateCards: true },
+        },
+      },
     });
 
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) return 0;
 
-    return this.prisma.$transaction(async (tx) => {
-      if (dto.name !== undefined) {
-        await tx.user.update({
-          where: { id: userId },
-          data: { name: dto.name },
-        });
-      }
+    let filled = 0;
+    let total = 0;
 
-      const { name: _name, bio, categories, availabilityStatus, ...companyFields } = dto;
+    // Shared fields
+    const sharedFields = [user.name, user.email];
+    total += sharedFields.length;
+    filled += sharedFields.filter(Boolean).length;
 
-      if (user.role === 'BRAND') {
-        await tx.brandProfile.upsert({
-          where: { userId },
-          create: { userId, ...this.brandFields(companyFields) },
-          update: this.brandFields(companyFields),
-        });
-      } else if (user.role === 'AGENCY') {
-        await tx.agencyProfile.upsert({
-          where: { userId },
-          create: { userId, ...this.brandFields(companyFields) },
-          update: this.brandFields(companyFields),
-        });
-      } else if (user.role === 'INFLUENCER') {
-        await tx.influencerProfile.upsert({
-          where: { userId },
-          create: {
-            userId,
-            bio,
-            categories: categories ?? [],
-            availabilityStatus,
-          },
-          update: {
-            ...(bio !== undefined && { bio }),
-            ...(categories !== undefined && { categories }),
-            ...(availabilityStatus !== undefined && { availabilityStatus }),
-          },
-        });
-      }
+    if (user.role === 'BRAND' || user.role === 'AGENCY') {
+      const p = user.brandProfile ?? user.agencyProfile;
+      const fields = [
+        p?.companyName,
+        p?.position,
+        p?.telephone,
+        p?.companyDetail,
+        p?.websiteUrl,
+        p?.socialLinks,
+      ];
+      total += fields.length;
+      filled += fields.filter(Boolean).length;
+    }
 
-      return this.getProfile(userId);
-    });
-  }
+    if (user.role === 'INFLUENCER') {
+      const p = user.influencerProfile;
+      const fields = [
+        p?.bio,
+        p?.categories,
+        p?.styleTags,
+        p?.keywords,
+      ];
+      total += fields.length;
+      filled += fields.filter(v => v && (Array.isArray(v) ? v.length > 0 : true)).length;
 
-  private brandFields(dto: Partial<UpdateProfileDto>) {
-    return {
-      ...(dto.companyName !== undefined && { companyName: dto.companyName }),
-      ...(dto.position !== undefined && { position: dto.position }),
-      ...(dto.telephone !== undefined && { telephone: dto.telephone }),
-      ...(dto.companyDetail !== undefined && { companyDetail: dto.companyDetail }),
-      ...(dto.websiteUrl !== undefined && { websiteUrl: dto.websiteUrl }),
-      ...(dto.socialLinks !== undefined && { socialLinks: dto.socialLinks }),
-    };
+      // Platform accounts and rate card count as single items
+      total += 2;
+      if (p?.platformAccounts?.length) filled += 1;
+      if (p?.rateCards?.length) filled += 1;
+    }
+
+    return total > 0 ? Math.round((filled / total) * 100) : 0;
   }
 }
