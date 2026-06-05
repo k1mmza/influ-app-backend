@@ -6,6 +6,13 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SelectRoleDto } from './dto/select-role.dto';
 
+interface OAuthUserPayload {
+  oauthProvider: string;
+  oauthId: string;
+  email: string;
+  name: string;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -48,6 +55,40 @@ export class AuthService {
     };
   }
 
+  async findOrCreateOAuthUser(payload: OAuthUserPayload) {
+    const { oauthProvider, oauthId, email, name } = payload;
+
+    // Try to find by oauthId first, then by email (merge accounts)
+    let user = await this.prisma.user.findFirst({
+      where: { oauthProvider, oauthId },
+    });
+
+    if (!user && email) {
+      user = await this.prisma.user.findUnique({ where: { email } });
+      if (user) {
+        // Link OAuth to existing email account
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { oauthProvider, oauthId },
+        });
+      }
+    }
+
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          name,
+          oauthProvider,
+          oauthId,
+          wallet: { create: {} },
+        },
+      });
+    }
+
+    return user;
+  }
+
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
@@ -55,6 +96,10 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (!user.password) {
+      throw new UnauthorizedException('This account uses Google sign-in. Please continue with Google.');
     }
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
@@ -115,6 +160,10 @@ export class AuthService {
 
       return updatedUser;
     });
+  }
+
+  async generateTokenForUser(user: { id: string; email: string }) {
+    return this.generateToken(user.id, user.email);
   }
 
   private async generateToken(userId: string, email: string) {
