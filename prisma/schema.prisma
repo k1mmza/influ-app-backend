@@ -34,9 +34,10 @@ model User {
   isDeleted            Boolean   @default(false)
 
   // Profiles
-  brandProfile      BrandProfile?
-  agencyProfile     AgencyProfile?
-  influencerProfile InfluencerProfile?
+  brandProfile              BrandProfile?
+  agencyProfile             AgencyProfile?
+  influencerProfile         InfluencerProfile?
+  claimedExternalProfiles   InfluencerProfile[] @relation("ClaimedProfile")
 
   // User Related
   wallet           Wallet?
@@ -95,6 +96,20 @@ model InfluencerProfile {
   growthRate          Float?
   updatedAt           DateTime @updatedAt
 
+  // Sync metadata
+  syncStatus        String    @default("IDLE")  // IDLE | SYNCING
+  lastSyncedAt      DateTime?
+  nextRefreshAt     DateTime?
+
+  // External profile (created from URL search, not self-registered)
+  isExternal        Boolean   @default(false)
+  externalHandle    String?
+
+  // Claim & merge
+  claimed           Boolean   @default(false)
+  claimedByUserId   String?
+  claimedBy         User?     @relation("ClaimedProfile", fields: [claimedByUserId], references: [id])
+
   // Influencer Related
   platformAccounts   PlatformAccount[]
   rateCards          RateCard[]
@@ -104,6 +119,7 @@ model InfluencerProfile {
   shortlists         Shortlist[]
   conversations      Conversation[]
   payments           Payment[]
+  profileEvents      ProfileEvent[]
 }
 
 model ClientBrand {
@@ -373,6 +389,17 @@ model Message {
   attachmentUrls Json?
   isRead         Boolean      @default(false)
   sentAt         DateTime     @default(now())
+}
+
+// PROFILE ACTIVITY EVENTS (for dynamic TTL calculation)
+model ProfileEvent {
+  id           String            @id @default(uuid())
+  influencerId String
+  influencer   InfluencerProfile @relation(fields: [influencerId], references: [id])
+  type         String            // VIEW | SEARCH | SAVE | CAMPAIGN
+  createdAt    DateTime          @default(now())
+
+  @@index([influencerId, createdAt])
 }
 
 // PAYMENTS
