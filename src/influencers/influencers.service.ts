@@ -228,6 +228,102 @@ export class InfluencersService {
     return influencer ? this.formatInfluencer(influencer) : null;
   }
 
+  async getClaimCandidates(influencerId: string): Promise<any[]> {
+    const accounts = await this.prisma.platformAccount.findMany({
+      where: { influencerId },
+    });
+    if (!accounts.length) return [];
+
+    const candidates = await Promise.all(
+      accounts.map((acc) =>
+        this.prisma.platformAccount.findMany({
+          where: {
+            platform: { equals: acc.platform, mode: 'insensitive' },
+            handle: { equals: acc.handle, mode: 'insensitive' },
+            influencer: { isExternal: true, claimed: false },
+            influencerId: { not: influencerId },
+          },
+          include: {
+            influencer: {
+              include: {
+                user: { select: { name: true } },
+                platformAccounts: true,
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    const seen = new Set<string>();
+    return candidates
+      .flat()
+      .map((a) => a.influencer)
+      .filter((inf) => {
+        if (seen.has(inf.id)) return false;
+        seen.add(inf.id);
+        return true;
+      })
+      .map((inf) => this.formatInfluencer(inf));
+  }
+
+  async claimProfile(
+    externalInfluencerId: string,
+    claimerInfluencerId: string,
+  ): Promise<void> {
+    const [external, claimer] = await Promise.all([
+      this.prisma.influencerProfile.findUnique({
+        where: { id: externalInfluencerId },
+        include: { platformAccounts: true },
+      }),
+      this.prisma.influencerProfile.findUnique({
+        where: { id: claimerInfluencerId },
+        include: { user: true, platformAccounts: true },
+      }),
+    ]);
+
+    if (!external || !claimer) throw new Error('Profile not found');
+    if (!external.isExternal) throw new Error('Target is not an external profile');
+    if (external.claimed) throw new Error('Profile already claimed');
+
+    const claimerHandles = new Set(
+      claimer.platformAccounts.map((a) => `${a.platform}:${a.handle.toLowerCase()}`),
+    );
+
+    const accountsToTransfer = external.platformAccounts.filter(
+      (a) => !claimerHandles.has(`${a.platform}:${a.handle.toLowerCase()}`),
+    );
+
+    await this.prisma.$transaction([
+      // Transfer unique platform accounts to claimer
+      ...accountsToTransfer.map((a) =>
+        this.prisma.platformAccount.update({
+          where: { id: a.id },
+          data: { influencerId: claimerInfluencerId },
+        }),
+      ),
+      // Transfer profile events
+      this.prisma.profileEvent.updateMany({
+        where: { influencerId: externalInfluencerId },
+        data: { influencerId: claimerInfluencerId },
+      }),
+      // Mark external profile as claimed
+      this.prisma.influencerProfile.update({
+        where: { id: externalInfluencerId },
+        data: { claimed: true, claimedByUserId: claimer.userId },
+      }),
+      // Fill in claimer's empty fields from external
+      this.prisma.influencerProfile.update({
+        where: { id: claimerInfluencerId },
+        data: {
+          bio: claimer.bio ?? external.bio ?? undefined,
+          categories: (claimer.categories ?? external.categories ?? undefined) as any,
+          growthRate: claimer.growthRate ?? external.growthRate ?? undefined,
+        },
+      }),
+    ]);
+  }
+
   async lookupByHandle(
     platform: string,
     handle: string,
