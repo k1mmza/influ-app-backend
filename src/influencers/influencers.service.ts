@@ -1,9 +1,17 @@
 import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { TtlService, INFLUENCER_SYNC_QUEUE } from '../sync/ttl.service';
+import { SyncJobData } from '../sync/sync.processor';
 
 @Injectable()
 export class InfluencersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private ttl: TtlService,
+    @InjectQueue(INFLUENCER_SYNC_QUEUE) private syncQueue: Queue<SyncJobData>,
+  ) {}
 
   async findAll(query: any) {
     const {
@@ -218,5 +226,48 @@ export class InfluencersService {
       },
     });
     return influencer ? this.formatInfluencer(influencer) : null;
+  }
+
+  async lookupByHandle(
+    platform: string,
+    handle: string,
+  ): Promise<{ found: boolean; influencer?: any }> {
+    await this.ttl.recordEvent('', 'SEARCH').catch(() => {}); // best-effort global search count
+
+    const account = await this.prisma.platformAccount.findFirst({
+      where: {
+        platform: { equals: platform.toLowerCase(), mode: 'insensitive' },
+        handle: { equals: handle.replace(/^@/, ''), mode: 'insensitive' },
+      },
+      include: {
+        influencer: {
+          include: {
+            user: { select: { name: true, email: true } },
+            platformAccounts: true,
+          },
+        },
+      },
+    });
+
+    if (!account) return { found: false };
+
+    const influencer = account.influencer;
+
+    await this.ttl.recordEvent(influencer.id, 'SEARCH');
+
+    const shouldSync = await this.ttl.checkAndFlag(influencer.id);
+    if (shouldSync) {
+      await this.prisma.influencerProfile.update({
+        where: { id: influencer.id },
+        data: { syncStatus: 'SYNCING' },
+      });
+      await this.syncQueue.add('sync', {
+        influencerId: influencer.id,
+        platform: platform.toLowerCase(),
+        handle: handle.replace(/^@/, ''),
+      });
+    }
+
+    return { found: true, influencer: this.formatInfluencer(influencer) };
   }
 }
