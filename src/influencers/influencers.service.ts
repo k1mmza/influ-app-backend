@@ -4,6 +4,8 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { TtlService, INFLUENCER_SYNC_QUEUE } from '../sync/ttl.service';
 import { SyncJobData } from '../sync/sync.processor';
+import { YouTubeAdapter } from '../sync/adapters/youtube.adapter';
+import { PlatformProfile } from '../sync/adapters/platform.adapter';
 
 @Injectable()
 export class InfluencersService {
@@ -11,6 +13,7 @@ export class InfluencersService {
     private prisma: PrismaService,
     private ttl: TtlService,
     @InjectQueue(INFLUENCER_SYNC_QUEUE) private syncQueue: Queue<SyncJobData>,
+    private youtube: YouTubeAdapter,
   ) {}
 
   async findAll(query: any) {
@@ -327,13 +330,15 @@ export class InfluencersService {
   async lookupByHandle(
     platform: string,
     handle: string,
-  ): Promise<{ found: boolean; influencer?: any }> {
-    await this.ttl.recordEvent('', 'SEARCH').catch(() => {}); // best-effort global search count
+  ): Promise<{ found: boolean; source?: 'db' | 'api'; influencer?: any }> {
+    await this.ttl.recordEvent('', 'SEARCH').catch(() => {});
+
+    const cleanHandle = handle.replace(/^@/, '');
 
     const account = await this.prisma.platformAccount.findFirst({
       where: {
         platform: { equals: platform.toLowerCase(), mode: 'insensitive' },
-        handle: { equals: handle.replace(/^@/, ''), mode: 'insensitive' },
+        handle: { equals: cleanHandle, mode: 'insensitive' },
       },
       include: {
         influencer: {
@@ -345,25 +350,60 @@ export class InfluencersService {
       },
     });
 
-    if (!account) return { found: false };
-
-    const influencer = account.influencer;
-
-    await this.ttl.recordEvent(influencer.id, 'SEARCH');
-
-    const shouldSync = await this.ttl.checkAndFlag(influencer.id);
-    if (shouldSync) {
-      await this.prisma.influencerProfile.update({
-        where: { id: influencer.id },
-        data: { syncStatus: 'SYNCING' },
-      });
-      await this.syncQueue.add('sync', {
-        influencerId: influencer.id,
-        platform: platform.toLowerCase(),
-        handle: handle.replace(/^@/, ''),
-      });
+    if (account) {
+      const influencer = account.influencer;
+      await this.ttl.recordEvent(influencer.id, 'SEARCH');
+      const shouldSync = await this.ttl.checkAndFlag(influencer.id);
+      if (shouldSync) {
+        await this.prisma.influencerProfile.update({
+          where: { id: influencer.id },
+          data: { syncStatus: 'SYNCING' },
+        });
+        await this.syncQueue.add('sync', {
+          influencerId: influencer.id,
+          platform: platform.toLowerCase(),
+          handle: cleanHandle,
+        });
+      }
+      return { found: true, source: 'db', influencer: this.formatInfluencer(influencer) };
     }
 
-    return { found: true, influencer: this.formatInfluencer(influencer) };
+    // Not in DB — try live fetch from platform API
+    if (platform.toLowerCase() === 'youtube') {
+      const profile = await this.youtube.fetchProfile(cleanHandle);
+      if (profile) {
+        return { found: true, source: 'api', influencer: this.formatFromPlatformProfile(profile, platform) };
+      }
+    }
+
+    return { found: false };
+  }
+
+  private formatFromPlatformProfile(profile: PlatformProfile, platform: string) {
+    return {
+      id: `live-${platform.toLowerCase()}-${profile.handle}`,
+      name: profile.displayName,
+      platforms: [platform.toLowerCase()],
+      followers: profile.followers,
+      followersByPlatform: { [platform.toLowerCase()]: profile.followers },
+      avgViewsByPlatform: { [platform.toLowerCase()]: profile.avgViews },
+      engagementRate: profile.engagementRate,
+      category: 'Lifestyle',
+      performanceScore: null,
+      ratePerPost: null,
+      stylePresent: [],
+      avatarUrl: profile.avatarUrl ?? null,
+      meta: {
+        country: null,
+        city: null,
+        audienceCountryPercent: null,
+        averageViews: profile.avgViews,
+        growthRate: profile.growthRate,
+        qualityScore: null,
+        responseRate: null,
+        bio: profile.bio,
+        profileUrl: profile.profileUrl,
+      },
+    };
   }
 }

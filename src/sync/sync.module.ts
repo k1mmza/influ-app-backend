@@ -19,6 +19,6 @@ import { YouTubeAdapter } from './adapters/youtube.adapter';
     InstagramAdapter,
     YouTubeAdapter,
   ],
-  exports: [TtlService, BullModule],
+  exports: [TtlService, BullModule, YouTubeAdapter],
 })
 export class SyncModule {}
