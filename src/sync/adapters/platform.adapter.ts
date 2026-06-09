@@ -8,6 +8,11 @@ export interface PlatformProfile {
   growthRate: number;
   profileUrl: string;
   avatarUrl?: string;
+  latestVideo?: {
+    id: string;
+    title: string;
+    thumbnail: string;
+  };
 }
 
 export abstract class PlatformAdapter {

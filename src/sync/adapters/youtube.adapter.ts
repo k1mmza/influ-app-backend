@@ -23,6 +23,12 @@ interface YTListResponse<T> {
   items?: T[];
 }
 
+interface VideoStats {
+  avgViews: number;
+  engagementRate: number;
+  latestVideo?: PlatformProfile['latestVideo'];
+}
+
 @Injectable()
 export class YouTubeAdapter extends PlatformAdapter {
   readonly platform = 'youtube';
@@ -47,11 +53,13 @@ export class YouTubeAdapter extends PlatformAdapter {
 
       let avgViews = videoCount > 0 ? Math.round(totalViews / videoCount) : 0;
       let engagementRate = 0;
+      let latestVideo: PlatformProfile['latestVideo'];
 
       if (uploadsId) {
         const stats = await this.recentVideoStats(uploadsId, apiKey);
         if (stats.avgViews > 0) avgViews = stats.avgViews;
         engagementRate = stats.engagementRate;
+        latestVideo = stats.latestVideo;
       }
 
       const cleanHandle =
@@ -69,6 +77,7 @@ export class YouTubeAdapter extends PlatformAdapter {
         avatarUrl:
           channel.snippet.thumbnails.high?.url ??
           channel.snippet.thumbnails.default?.url,
+        latestVideo,
       };
     } catch (err: any) {
       this.logger.error(`YouTube fetch failed for "${handle}": ${err.message}`);
@@ -107,7 +116,7 @@ export class YouTubeAdapter extends PlatformAdapter {
   private async recentVideoStats(
     uploadsPlaylistId: string,
     apiKey: string,
-  ): Promise<{ avgViews: number; engagementRate: number }> {
+  ): Promise<VideoStats> {
     const playlist = await this.get<YTListResponse<any>>(
       `/playlistItems?part=contentDetails&playlistId=${encodeURIComponent(uploadsPlaylistId)}&maxResults=10&key=${apiKey}`,
     );
@@ -120,8 +129,9 @@ export class YouTubeAdapter extends PlatformAdapter {
 
     if (!ids) return { avgViews: 0, engagementRate: 0 };
 
+    // Fetch both statistics (for engagement) and snippet (for title + thumbnail)
     const videos = await this.get<YTListResponse<any>>(
-      `/videos?part=statistics&id=${encodeURIComponent(ids)}&key=${apiKey}`,
+      `/videos?part=statistics,snippet&id=${encodeURIComponent(ids)}&key=${apiKey}`,
     );
     if (!videos?.items?.length) return { avgViews: 0, engagementRate: 0 };
 
@@ -145,7 +155,21 @@ export class YouTubeAdapter extends PlatformAdapter {
           )
         : 0;
 
-    return { avgViews, engagementRate };
+    // Latest video = first item returned (playlist is newest-first)
+    const first = videos.items[0];
+    const latestVideo: PlatformProfile['latestVideo'] = first
+      ? {
+          id: first.id as string,
+          title: (first.snippet?.title as string) ?? 'Latest Video',
+          thumbnail:
+            (first.snippet?.thumbnails?.maxres?.url as string) ??
+            (first.snippet?.thumbnails?.high?.url as string) ??
+            (first.snippet?.thumbnails?.medium?.url as string) ??
+            `https://img.youtube.com/vi/${first.id}/mqdefault.jpg`,
+        }
+      : undefined;
+
+    return { avgViews, engagementRate, latestVideo };
   }
 
   private async get<T>(path: string): Promise<T | null> {

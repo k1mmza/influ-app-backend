@@ -393,6 +393,7 @@ export class InfluencersService {
       ratePerPost: null,
       stylePresent: [],
       avatarUrl: profile.avatarUrl ?? null,
+      latestVideo: profile.latestVideo ?? null,
       meta: {
         country: null,
         city: null,
