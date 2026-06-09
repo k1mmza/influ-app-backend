@@ -7,8 +7,9 @@ export interface PlatformProfile {
   engagementRate: number;
   growthRate: number;
   profileUrl: string;
+  country?: string;
   avatarUrl?: string;
-  latestVideo?: {
+  spotlightVideo?: {
     id: string;
     title: string;
     thumbnail: string;

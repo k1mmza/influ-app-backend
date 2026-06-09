@@ -7,6 +7,7 @@ interface YTChannelItem {
     title: string;
     description: string;
     customUrl?: string;
+    country?: string;
     thumbnails: { high?: { url: string }; default?: { url: string } };
   };
   statistics: {
@@ -26,7 +27,7 @@ interface YTListResponse<T> {
 interface VideoStats {
   avgViews: number;
   engagementRate: number;
-  latestVideo?: PlatformProfile['latestVideo'];
+  spotlightVideo?: PlatformProfile['spotlightVideo'];
 }
 
 @Injectable()
@@ -53,17 +54,22 @@ export class YouTubeAdapter extends PlatformAdapter {
 
       let avgViews = videoCount > 0 ? Math.round(totalViews / videoCount) : 0;
       let engagementRate = 0;
-      let latestVideo: PlatformProfile['latestVideo'];
+      let spotlightVideo: PlatformProfile['spotlightVideo'];
 
       if (uploadsId) {
         const stats = await this.recentVideoStats(uploadsId, apiKey);
         if (stats.avgViews > 0) avgViews = stats.avgViews;
         engagementRate = stats.engagementRate;
-        latestVideo = stats.latestVideo;
+        spotlightVideo = stats.spotlightVideo;
       }
 
       const cleanHandle =
         channel.snippet.customUrl?.replace(/^@/, '') ?? handle.replace(/^@/, '');
+
+      const countryCode = channel.snippet.country;
+      const country = countryCode
+        ? new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ?? countryCode
+        : undefined;
 
       return {
         handle: cleanHandle,
@@ -74,10 +80,11 @@ export class YouTubeAdapter extends PlatformAdapter {
         engagementRate,
         growthRate: 0,
         profileUrl: `https://www.youtube.com/@${cleanHandle}`,
+        country,
         avatarUrl:
           channel.snippet.thumbnails.high?.url ??
           channel.snippet.thumbnails.default?.url,
-        latestVideo,
+        spotlightVideo,
       };
     } catch (err: any) {
       this.logger.error(`YouTube fetch failed for "${handle}": ${err.message}`);
@@ -117,8 +124,9 @@ export class YouTubeAdapter extends PlatformAdapter {
     uploadsPlaylistId: string,
     apiKey: string,
   ): Promise<VideoStats> {
+    // Fetch 50 recent uploads — enough to find a genuinely popular video
     const playlist = await this.get<YTListResponse<any>>(
-      `/playlistItems?part=contentDetails&playlistId=${encodeURIComponent(uploadsPlaylistId)}&maxResults=10&key=${apiKey}`,
+      `/playlistItems?part=contentDetails&playlistId=${encodeURIComponent(uploadsPlaylistId)}&maxResults=50&key=${apiKey}`,
     );
     if (!playlist?.items?.length) return { avgViews: 0, engagementRate: 0 };
 
@@ -129,7 +137,6 @@ export class YouTubeAdapter extends PlatformAdapter {
 
     if (!ids) return { avgViews: 0, engagementRate: 0 };
 
-    // Fetch both statistics (for engagement) and snippet (for title + thumbnail)
     const videos = await this.get<YTListResponse<any>>(
       `/videos?part=statistics,snippet&id=${encodeURIComponent(ids)}&key=${apiKey}`,
     );
@@ -155,21 +162,26 @@ export class YouTubeAdapter extends PlatformAdapter {
           )
         : 0;
 
-    // Latest video = first item returned (playlist is newest-first)
-    const first = videos.items[0];
-    const latestVideo: PlatformProfile['latestVideo'] = first
+    // Pick the most-viewed video from the fetched batch for the spotlight
+    const topVideo = [...videos.items].sort(
+      (a: any, b: any) =>
+        parseInt(b.statistics?.viewCount ?? '0', 10) -
+        parseInt(a.statistics?.viewCount ?? '0', 10),
+    )[0];
+
+    const spotlightVideo: PlatformProfile['spotlightVideo'] = topVideo
       ? {
-          id: first.id as string,
-          title: (first.snippet?.title as string) ?? 'Latest Video',
+          id: topVideo.id as string,
+          title: (topVideo.snippet?.title as string) ?? 'Top Video',
           thumbnail:
-            (first.snippet?.thumbnails?.maxres?.url as string) ??
-            (first.snippet?.thumbnails?.high?.url as string) ??
-            (first.snippet?.thumbnails?.medium?.url as string) ??
-            `https://img.youtube.com/vi/${first.id}/mqdefault.jpg`,
+            (topVideo.snippet?.thumbnails?.maxres?.url as string) ??
+            (topVideo.snippet?.thumbnails?.high?.url as string) ??
+            (topVideo.snippet?.thumbnails?.medium?.url as string) ??
+            `https://img.youtube.com/vi/${topVideo.id}/mqdefault.jpg`,
         }
       : undefined;
 
-    return { avgViews, engagementRate, latestVideo };
+    return { avgViews, engagementRate, spotlightVideo };
   }
 
   private async get<T>(path: string): Promise<T | null> {
