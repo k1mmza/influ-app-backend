@@ -81,8 +81,8 @@ model AgencyProfile {
 
 model InfluencerProfile {
   id                  String   @id @default(uuid())
-  userId              String   @unique
-  user                User     @relation(fields: [userId], references: [id])
+  userId              String?  @unique
+  user                User?    @relation(fields: [userId], references: [id])
   bio                 String?  @db.Text
   categories          Json?    // e.g. ["beauty", "lifestyle"]
   styleTags           Json?
@@ -171,9 +171,11 @@ model Notification {
 model PlatformAccount {
   id                String            @id @default(uuid())
   influencerId      String
-  influencer        InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer        InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   platform          String            // tiktok, instagram, etc.
   handle            String
+  displayName       String?
+  avatarUrl         String?
   profileUrl        String?
   followers         Int               @default(0)
   avgViews          Int               @default(0)
@@ -181,6 +183,8 @@ model PlatformAccount {
   growthRate        Float             @default(0)
   isPrimary         Boolean           @default(false)
   syncedAt          DateTime          @default(now())
+  spotlightVideoId    String?
+  spotlightVideoTitle String?
 
   // Relationships
   audienceInsights AudienceInsight[]
@@ -190,7 +194,7 @@ model PlatformAccount {
 model AudienceInsight {
   id                String          @id @default(uuid())
   platformAccountId String
-  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id])
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
   malePct           Float?
   femalePct         Float?
   ageDistribution   Json?
@@ -199,7 +203,7 @@ model AudienceInsight {
 model RateCard {
   id                 String            @id @default(uuid())
   influencerId       String
-  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   pricePerPost       Float?
   pricePerVideo      Float?
   pricePerStory      Float?
@@ -228,7 +232,7 @@ model SubmittedContent {
 model ContentPreview {
   id                String          @id @default(uuid())
   platformAccountId String
-  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id])
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
   thumbnailUrl      String?
   contentUrl        String?
   contentType       String?
@@ -358,7 +362,7 @@ model Shortlist {
   clientBrandId String
   clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
   influencerId  String
-  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   addedAt       DateTime          @default(now())
 }
 
@@ -395,7 +399,7 @@ model Message {
 model ProfileEvent {
   id           String            @id @default(uuid())
   influencerId String
-  influencer   InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer   InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   type         String            // VIEW | SEARCH | SAVE | CAMPAIGN
   createdAt    DateTime          @default(now())
 

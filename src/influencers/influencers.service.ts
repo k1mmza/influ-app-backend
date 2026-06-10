@@ -6,6 +6,7 @@ import { TtlService, INFLUENCER_SYNC_QUEUE } from '../sync/ttl.service';
 import { SyncJobData } from '../sync/sync.processor';
 import { YouTubeAdapter } from '../sync/adapters/youtube.adapter';
 import { PlatformProfile } from '../sync/adapters/platform.adapter';
+import { AiAnalysisService, AiChannelAnalysis } from './ai-analysis.service';
 
 @Injectable()
 export class InfluencersService {
@@ -14,6 +15,7 @@ export class InfluencersService {
     private ttl: TtlService,
     @InjectQueue(INFLUENCER_SYNC_QUEUE) private syncQueue: Queue<SyncJobData>,
     private youtube: YouTubeAdapter,
+    private aiAnalysis: AiAnalysisService,
   ) {}
 
   async findAll(query: any) {
@@ -190,32 +192,121 @@ export class InfluencersService {
     return influencers.map((inf) => this.formatInfluencer(inf));
   }
 
+  // ── Score helpers ────────────────────────────────────────────────────────
+
+  /** Engagement-rate benchmark (%) per platform. */
+  private readonly ER_BENCHMARK: Record<string, number> = {
+    tiktok: 6, instagram: 3, youtube: 3, facebook: 1, x: 0.5, lemon8: 4,
+  };
+
+  private benchmarkFor(platform: string): number {
+    return this.ER_BENCHMARK[platform.toLowerCase()] ?? 4;
+  }
+
+  /**
+   * Quality Score (0–100) — Audience Quality
+   * = ER authenticity (60 pts) + views-to-followers ratio (40 pts)
+   *
+   * Low ER relative to benchmark → likely inflated followers (bot risk).
+   * Low avgViews / followers → same signal.
+   */
+  private computeQualityScore(er: number, avgViews: number, followers: number, platform: string): number {
+    const benchmark = this.benchmarkFor(platform);
+    // ER component: 100% of benchmark = 60 pts; capped at 60
+    const erScore = Math.min(60, Math.round((er / Math.max(benchmark, 0.1)) * 60));
+    // Views ratio component: 20% ratio = 40 pts; typical threshold 10–20%
+    const viewRatio = followers > 0 ? avgViews / followers : 0;
+    const viewScore = Math.min(40, Math.round(viewRatio * 200));
+    return erScore + viewScore; // 0–100
+  }
+
+  /**
+   * Performance Score (0–100) — Composite
+   * Weights: Engagement Quality 30% + Audience Quality 30% + Growth Rate 25% + Content Consistency 15%
+   */
+  private computePerformanceScore(
+    er: number,
+    avgViews: number,
+    followers: number,
+    platform: string,
+    growthRate: number,
+    qualityScore: number,
+  ): number {
+    const benchmark = this.benchmarkFor(platform);
+    const engagementQuality = Math.min(100, Math.round((er / Math.max(benchmark, 0.1)) * 100));
+    // Growth: 20% MoM = full score
+    const growthQuality = Math.min(100, Math.round((growthRate / 20) * 100));
+    // Consistency proxy: stable views relative to follower base (30% ratio = 100)
+    const consistencyQuality = Math.min(100, Math.round((followers > 0 ? avgViews / followers : 0) * 300));
+
+    return Math.min(
+      100,
+      Math.round(
+        engagementQuality * 0.30 +
+        qualityScore       * 0.30 +
+        growthQuality      * 0.25 +
+        consistencyQuality * 0.15,
+      ),
+    );
+  }
+
+  private computeScores(accounts: any[], growthRate: number): { qualityScore: number; performanceScore: number } {
+    if (!accounts.length) return { qualityScore: 0, performanceScore: 0 };
+    const main = accounts.reduce((a, b) => (a.followers > b.followers ? a : b), accounts[0]);
+    const er = main.engagementRate ?? 0;
+    const avgViews = main.avgViews ?? 0;
+    const followers = Math.max(main.followers ?? 0, 1);
+    const platform = main.platform ?? '';
+
+    const qualityScore = this.computeQualityScore(er, avgViews, followers, platform);
+    const performanceScore = this.computePerformanceScore(er, avgViews, followers, platform, growthRate ?? 0, qualityScore);
+    return { qualityScore, performanceScore };
+  }
+
+  // ── Formatters ───────────────────────────────────────────────────────────
+
   private formatInfluencer(inf: any) {
-    // Format to match frontend Influencer type
-    const mainAccount = inf.platformAccounts.reduce((prev, current) => 
-      (prev.followers > current.followers) ? prev : current, inf.platformAccounts[0] || {});
+    const mainAccount = inf.platformAccounts.reduce(
+      (prev, current) => (prev.followers > current.followers ? prev : current),
+      inf.platformAccounts[0] || {},
+    );
+    const { qualityScore, performanceScore } = this.computeScores(
+      inf.platformAccounts,
+      inf.growthRate ?? 0,
+    );
+
+    const spotlightVideo = mainAccount.spotlightVideoId
+      ? {
+          id: mainAccount.spotlightVideoId,
+          title: mainAccount.spotlightVideoTitle || '',
+          thumbnail: `https://img.youtube.com/vi/${mainAccount.spotlightVideoId}/hqdefault.jpg`,
+        }
+      : null;
 
     return {
       id: inf.id,
-      name: inf.user?.name || 'Unknown',
+      name: inf.user?.name || mainAccount.displayName || 'Unknown',
       platforms: inf.platformAccounts.map((p) => p.platform),
       followers: mainAccount.followers || 0,
       followersByPlatform: inf.platformAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.followers }), {}),
       avgViewsByPlatform: inf.platformAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avgViews }), {}),
       engagementRate: mainAccount.engagementRate || 0,
       category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'Lifestyle'),
-      performanceScore: inf.performanceScore || 85,
-      ratePerPost: 0, // Need to fetch from RateCard if exists
+      performanceScore,
+      ratePerPost: 0,
       stylePresent: Array.isArray(inf.styleTags) ? inf.styleTags : [],
+      avatarUrl: mainAccount.avatarUrl || null,
+      spotlightVideo,
       meta: {
-        country: 'Thailand', // Placeholder as not in schema directly
+        country: 'Thailand',
         city: 'Bangkok',
         audienceCountryPercent: 70,
         averageViews: mainAccount.avgViews || 0,
         growthRate: inf.growthRate || 0,
-        qualityScore: inf.qualityScore || 80,
-        responseRate: inf.responseRate || 90,
-      }
+        qualityScore,
+        responseRate: inf.responseRate || 0,
+        bio: inf.bio || null,
+      },
     };
   }
 
@@ -372,14 +463,93 @@ export class InfluencersService {
     if (platform.toLowerCase() === 'youtube') {
       const profile = await this.youtube.fetchProfile(cleanHandle);
       if (profile) {
-        return { found: true, source: 'api', influencer: this.formatFromPlatformProfile(profile, platform) };
+        const aiData = await this.aiAnalysis.analyzeYouTubeChannel(
+          profile.displayName,
+          profile.bio,
+          profile.topVideoIds ?? [],
+          profile.videoTitles ?? [],
+        );
+
+        // ── Persist as external profile so future searches skip the API ──
+        const fakeAccount = [{
+          platform: platform.toLowerCase(),
+          followers: profile.followers,
+          engagementRate: profile.engagementRate,
+          avgViews: profile.avgViews,
+        }];
+        const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+
+        const saved = await this.prisma.influencerProfile.create({
+          data: {
+            isExternal: true,
+            externalHandle: cleanHandle,
+            bio: aiData?.bio ?? profile.bio ?? null,
+            categories: aiData?.category ? [aiData.category] : [],
+            styleTags: aiData?.tags ?? [],
+            growthRate: profile.growthRate ?? null,
+            qualityScore,
+            performanceScore,
+            syncStatus: 'IDLE',
+            lastSyncedAt: new Date(),
+            // nextRefreshAt: TTL service will set this on first checkAndFlag call;
+            // seed 7 days so a popular profile gets refreshed soon
+            nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            platformAccounts: {
+              create: {
+                platform: platform.toLowerCase(),
+                handle: cleanHandle,
+                displayName: profile.displayName ?? null,
+                avatarUrl: profile.avatarUrl ?? null,
+                profileUrl: profile.profileUrl ?? null,
+                followers: profile.followers,
+                engagementRate: profile.engagementRate,
+                avgViews: profile.avgViews,
+                spotlightVideoId: profile.spotlightVideo?.id ?? null,
+                spotlightVideoTitle: profile.spotlightVideo?.title ?? null,
+              },
+            },
+          },
+          include: {
+            platformAccounts: true,
+            user: { select: { name: true, email: true } },
+          },
+        });
+
+        await this.ttl.recordEvent(saved.id, 'SEARCH');
+
+        const formatted = this.formatInfluencer(saved);
+        return {
+          found: true,
+          source: 'api',
+          influencer: {
+            ...formatted,
+            meta: {
+              ...formatted.meta,
+              country: profile.country ?? aiData?.audienceCountry ?? null,
+              audienceGender: aiData?.audienceGender ?? null,
+              audienceAgeGroup: aiData?.audienceAgeGroup ?? null,
+            },
+          },
+        };
       }
     }
 
     return { found: false };
   }
 
-  private formatFromPlatformProfile(profile: PlatformProfile, platform: string) {
+  private formatFromPlatformProfile(
+    profile: PlatformProfile,
+    platform: string,
+    aiData?: AiChannelAnalysis | null,
+  ) {
+    const fakeAccount = [{
+      platform,
+      followers: profile.followers,
+      engagementRate: profile.engagementRate,
+      avgViews: profile.avgViews,
+    }];
+    const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+
     return {
       id: `live-${platform.toLowerCase()}-${profile.handle}`,
       name: profile.displayName,
@@ -388,14 +558,14 @@ export class InfluencersService {
       followersByPlatform: { [platform.toLowerCase()]: profile.followers },
       avgViewsByPlatform: { [platform.toLowerCase()]: profile.avgViews },
       engagementRate: profile.engagementRate,
-      category: 'Lifestyle',
-      performanceScore: null,
+      category: aiData?.category ?? 'Lifestyle',
+      performanceScore,
       ratePerPost: null,
-      stylePresent: [],
+      stylePresent: aiData?.tags ?? [],
       avatarUrl: profile.avatarUrl ?? null,
       spotlightVideo: profile.spotlightVideo ?? null,
       meta: {
-        country: profile.country ?? null,
+        country: profile.country ?? aiData?.audienceCountry ?? null,
         city: null,
         extraPlatforms: [],
         audienceCountryPercent: null,
@@ -403,11 +573,11 @@ export class InfluencersService {
         growthRate: profile.growthRate,
         keywords: [],
         intents: [],
-        audienceGender: null,
-        audienceAgeGroup: null,
-        qualityScore: null,
+        audienceGender: aiData?.audienceGender ?? null,
+        audienceAgeGroup: aiData?.audienceAgeGroup ?? null,
+        qualityScore,
         responseRate: null,
-        bio: profile.bio,
+        bio: aiData?.bio ?? profile.bio,
         profileUrl: profile.profileUrl,
       },
     };
