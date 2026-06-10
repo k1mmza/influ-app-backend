@@ -28,6 +28,8 @@ interface VideoStats {
   avgViews: number;
   engagementRate: number;
   spotlightVideo?: PlatformProfile['spotlightVideo'];
+  topVideoIds: string[];
+  videoTitles: string[];
 }
 
 @Injectable()
@@ -55,12 +57,16 @@ export class YouTubeAdapter extends PlatformAdapter {
       let avgViews = videoCount > 0 ? Math.round(totalViews / videoCount) : 0;
       let engagementRate = 0;
       let spotlightVideo: PlatformProfile['spotlightVideo'];
+      let topVideoIds: string[] = [];
+      let videoTitles: string[] = [];
 
       if (uploadsId) {
         const stats = await this.recentVideoStats(uploadsId, apiKey);
         if (stats.avgViews > 0) avgViews = stats.avgViews;
         engagementRate = stats.engagementRate;
         spotlightVideo = stats.spotlightVideo;
+        topVideoIds = stats.topVideoIds;
+        videoTitles = stats.videoTitles;
       }
 
       const cleanHandle =
@@ -85,6 +91,8 @@ export class YouTubeAdapter extends PlatformAdapter {
           channel.snippet.thumbnails.high?.url ??
           channel.snippet.thumbnails.default?.url,
         spotlightVideo,
+        topVideoIds,
+        videoTitles,
       };
     } catch (err: any) {
       this.logger.error(`YouTube fetch failed for "${handle}": ${err.message}`);
@@ -128,19 +136,19 @@ export class YouTubeAdapter extends PlatformAdapter {
     const playlist = await this.get<YTListResponse<any>>(
       `/playlistItems?part=contentDetails&playlistId=${encodeURIComponent(uploadsPlaylistId)}&maxResults=50&key=${apiKey}`,
     );
-    if (!playlist?.items?.length) return { avgViews: 0, engagementRate: 0 };
+    if (!playlist?.items?.length) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [] };
 
     const ids = playlist.items
       .map((i: any) => i.contentDetails?.videoId as string)
       .filter(Boolean)
       .join(',');
 
-    if (!ids) return { avgViews: 0, engagementRate: 0 };
+    if (!ids) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [] };
 
     const videos = await this.get<YTListResponse<any>>(
       `/videos?part=statistics,snippet&id=${encodeURIComponent(ids)}&key=${apiKey}`,
     );
-    if (!videos?.items?.length) return { avgViews: 0, engagementRate: 0 };
+    if (!videos?.items?.length) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [] };
 
     const totals = videos.items.reduce(
       (acc: any, v: any) => ({
@@ -152,7 +160,7 @@ export class YouTubeAdapter extends PlatformAdapter {
       { views: 0, likes: 0, comments: 0, count: 0 },
     );
 
-    if (totals.count === 0) return { avgViews: 0, engagementRate: 0 };
+    if (totals.count === 0) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [] };
 
     const avgViews = Math.round(totals.views / totals.count);
     const engagementRate =
@@ -162,12 +170,14 @@ export class YouTubeAdapter extends PlatformAdapter {
           )
         : 0;
 
-    // Pick the most-viewed video from the fetched batch for the spotlight
-    const topVideo = [...videos.items].sort(
+    // Sort videos by view count descending
+    const sortedVideos = [...videos.items].sort(
       (a: any, b: any) =>
         parseInt(b.statistics?.viewCount ?? '0', 10) -
         parseInt(a.statistics?.viewCount ?? '0', 10),
-    )[0];
+    );
+
+    const topVideo = sortedVideos[0];
 
     const spotlightVideo: PlatformProfile['spotlightVideo'] = topVideo
       ? {
@@ -181,7 +191,17 @@ export class YouTubeAdapter extends PlatformAdapter {
         }
       : undefined;
 
-    return { avgViews, engagementRate, spotlightVideo };
+    const topVideoIds = sortedVideos
+      .map((v: any) => v.id as string)
+      .filter(Boolean)
+      .slice(0, 10);
+
+    const videoTitles = sortedVideos
+      .map((v: any) => v.snippet?.title as string)
+      .filter(Boolean)
+      .slice(0, 10);
+
+    return { avgViews, engagementRate, spotlightVideo, topVideoIds, videoTitles };
   }
 
   private async get<T>(path: string): Promise<T | null> {

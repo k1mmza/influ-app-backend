@@ -14,6 +14,8 @@ export interface PlatformProfile {
     title: string;
     thumbnail: string;
   };
+  topVideoIds?: string[];
+  videoTitles?: string[];
 }
 
 export abstract class PlatformAdapter {
