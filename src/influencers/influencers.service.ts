@@ -7,6 +7,7 @@ import { SyncJobData } from '../sync/sync.processor';
 import { YouTubeAdapter } from '../sync/adapters/youtube.adapter';
 import { PlatformProfile } from '../sync/adapters/platform.adapter';
 import { AiAnalysisService, AiChannelAnalysis } from './ai-analysis.service';
+import { SmartSearchService } from './smart-search.service';
 
 @Injectable()
 export class InfluencersService {
@@ -16,9 +17,32 @@ export class InfluencersService {
     @InjectQueue(INFLUENCER_SYNC_QUEUE) private syncQueue: Queue<SyncJobData>,
     private youtube: YouTubeAdapter,
     private aiAnalysis: AiAnalysisService,
+    private smartSearch: SmartSearchService,
   ) {}
 
   async findAll(query: any) {
+    console.log('Received query:', query);
+    if (query.q) {
+      const aiFilters = await this.smartSearch.parseQuery(query.q);
+      // Map AI category (singular) → categories param (plural) that findAll reads
+      if (aiFilters.category && !query.categories) {
+        (aiFilters as any).categories = aiFilters.category;
+      }
+      // Map AI platforms array → single platform string
+      if ((aiFilters as any).platforms?.length && !query.platform) {
+        (aiFilters as any).platform = (aiFilters as any).platforms.join(',').toLowerCase();
+      }
+      // Merge AI filters with explicit query params (explicit take priority)
+      query = { ...aiFilters, ...query, q: undefined };
+      if (query.category && !query.categories) query.categories = query.category;
+      if (!query.platform && query.platforms) {
+        query.platform = Array.isArray(query.platforms)
+          ? query.platforms.join(',')
+          : query.platforms;
+      }
+      console.log('Final merged query:', JSON.stringify(query));
+    }
+
     const {
       categories: categoriesParam,
       platform,
@@ -27,8 +51,6 @@ export class InfluencersService {
       minEngagementRate,
       minGrowthRate,
       keyword,
-      audienceGender,
-      audienceAgeGroup,
       minQualityScore,
       minPerformanceScore,
       maxRatePerPost,
@@ -37,73 +59,107 @@ export class InfluencersService {
       minResponseRate,
       stylePresent,
       availabilityStatus,
+      country,
     } = query;
 
     const where: any = {};
     const andConditions: any[] = [];
 
+    // ── Categories ───────────────────────────────────────────────────────────
+    // Use string_contains instead of array_contains — more reliable for JSON
+    // fields in Postgres. Matches "Gaming" inside ["Gaming"] as substring.
     if (categoriesParam) {
       const categoryList = (categoriesParam as string)
         .split(',')
-        .map((c: string) => c.trim().toLowerCase())
+        .map((c: string) => c.trim())
         .filter(Boolean);
+        
       if (categoryList.length === 1) {
+        // CHANGE THIS from string_contains to array_contains
         where.categories = { array_contains: categoryList[0] };
       } else if (categoryList.length > 1) {
         andConditions.push({
-          OR: categoryList.map((cat: string) => ({ categories: { array_contains: cat } })),
+          OR: categoryList.map((cat: string) => ({
+            // CHANGE THIS from string_contains to array_contains
+            categories: { array_contains: cat },
+          })),
         });
       }
     }
 
+    // ── Platform accounts (all filters merged into one `some` clause) ────────
+    const platformAccountFilter: any = {};
+
     if (platform && platform !== 'All') {
-      where.platformAccounts = {
-        some: {
-          platform: platform.toLowerCase(),
-        },
-      };
+      const platformList = (platform as string)
+        .split(',')
+        .map((p: string) => p.trim().toLowerCase())
+        .filter(Boolean);
+      if (platformList.length === 1) {
+        platformAccountFilter.platform = { 
+          equals: platformList[0], 
+          mode: 'insensitive' 
+        };
+      } else if (platformList.length > 1) {
+        andConditions.push({
+          // Prisma's 'in' operator doesn't natively support mode: 'insensitive'. 
+          // Using an OR array ensures it works regardless of database casing.
+          OR: platformList.map((p) => ({
+            platformAccounts: { 
+              some: { platform: { equals: p, mode: 'insensitive' } } 
+            }
+          }))
+        });
+      }
     }
 
     if (followerRange && followerRange !== 'All') {
       const ranges: any = {
-        Nano: { min: 1000, max: 10000 },
-        Micro: { min: 10000, max: 100000 },
-        Mid: { min: 100000, max: 500000 },
-        Macro: { min: 500000, max: 1000000 },
-        Mega: { min: 1000000 },
+        Nano:  { min: 1_000,   max: 10_000 },
+        Micro: { min: 10_000,  max: 100_000 },
+        Mid:   { min: 100_000, max: 500_000 },
+        Macro: { min: 500_000, max: 1_000_000 },
+        Mega:  { min: 1_000_000 },
       };
       const range = ranges[followerRange];
       if (range) {
-        where.platformAccounts = {
-          ...where.platformAccounts,
-          some: {
-            ...(where.platformAccounts?.some || {}),
-            followers: {
-              gte: range.min,
-              ...(range.max ? { lte: range.max } : {}),
-            },
-          },
+        platformAccountFilter.followers = {
+          gte: range.min,
+          ...(range.max ? { lte: range.max } : {}),
         };
       }
     }
 
-    const parsedEngagementRate = parseFloat(minEngagementRate);
-    if (!isNaN(parsedEngagementRate)) {
-      where.platformAccounts = {
-        ...where.platformAccounts,
-        some: {
-          ...(where.platformAccounts?.some || {}),
-          engagementRate: { gte: parsedEngagementRate },
-        },
+    const parsedMinFollowers = parseInt(minFollowers, 10);
+    if (!isNaN(parsedMinFollowers) && parsedMinFollowers > 0) {
+      platformAccountFilter.followers = {
+        ...(platformAccountFilter.followers || {}),
+        gte: parsedMinFollowers,
       };
     }
 
+    const parsedEngagementRate = parseFloat(minEngagementRate);
+    if (!isNaN(parsedEngagementRate) && parsedEngagementRate > 0) {
+      platformAccountFilter.engagementRate = { gte: parsedEngagementRate };
+    }
+
+    const parsedAvgViews = parseInt(minAverageViews, 10);
+    if (!isNaN(parsedAvgViews) && parsedAvgViews > 0) {
+      platformAccountFilter.avgViews = { gte: parsedAvgViews };
+    }
+
+    if (Object.keys(platformAccountFilter).length > 0) {
+      where.platformAccounts = { some: platformAccountFilter };
+    }
+
+    // ── Keyword ──────────────────────────────────────────────────────────────
     if (keyword) {
       andConditions.push({
         OR: [
           { bio: { contains: keyword, mode: 'insensitive' } },
           { user: { name: { contains: keyword, mode: 'insensitive' } } },
-          { categories: { array_contains: keyword.toLowerCase() } },
+          // string_contains here too — consistent with category filter
+          { categories: { string_contains: keyword } },
         ],
       });
     }
@@ -112,13 +168,14 @@ export class InfluencersService {
       where.AND = andConditions;
     }
 
+    // ── Profile-level numeric filters ────────────────────────────────────────
     const parsedQualityScore = parseFloat(minQualityScore);
-    if (!isNaN(parsedQualityScore)) {
+    if (!isNaN(parsedQualityScore) && parsedQualityScore > 0) {
       where.qualityScore = { gte: parsedQualityScore };
     }
 
     const parsedPerformanceScore = parseFloat(minPerformanceScore);
-    if (!isNaN(parsedPerformanceScore)) {
+    if (!isNaN(parsedPerformanceScore) && parsedPerformanceScore > 0) {
       where.performanceScore = { gte: parsedPerformanceScore };
     }
 
@@ -132,17 +189,7 @@ export class InfluencersService {
       where.responseRate = { gte: parsedResponseRate };
     }
 
-    const parsedAvgViews = parseInt(minAverageViews, 10);
-    if (!isNaN(parsedAvgViews) && parsedAvgViews > 0) {
-      where.platformAccounts = {
-        ...where.platformAccounts,
-        some: {
-          ...(where.platformAccounts?.some || {}),
-          avgViews: { gte: parsedAvgViews },
-        },
-      };
-    }
-
+    // ── Rate card ────────────────────────────────────────────────────────────
     const parsedMinRate = parseFloat(minRatePerPost);
     const parsedMaxRate = parseFloat(maxRatePerPost);
     const hasMinRate = !isNaN(parsedMinRate) && parsedMinRate > 0;
@@ -154,37 +201,25 @@ export class InfluencersService {
       where.rateCards = { some: { pricePerPost: priceCondition } };
     }
 
-    const parsedMinFollowers = parseInt(minFollowers, 10);
-    if (!isNaN(parsedMinFollowers) && parsedMinFollowers > 0) {
-      where.platformAccounts = {
-        ...where.platformAccounts,
-        some: {
-          ...(where.platformAccounts?.some || {}),
-          followers: {
-            ...(where.platformAccounts?.some?.followers || {}),
-            gte: parsedMinFollowers,
-          },
-        },
-      };
-    }
-
+    // ── Style / availability / country ───────────────────────────────────────
     if (stylePresent && stylePresent !== 'All') {
-      where.styleTags = { array_contains: stylePresent.toLowerCase() };
+      where.styleTags = { string_contains: stylePresent };
     }
 
     if (availabilityStatus && availabilityStatus !== 'All') {
       where.availabilityStatus = availabilityStatus;
     }
 
+    if (country) {
+      where.country = { equals: country, mode: 'insensitive' };
+    }
+
+    console.log('Final where clause:', JSON.stringify(where));
+
     const influencers = await this.prisma.influencerProfile.findMany({
       where,
       include: {
-        user: {
-          select: {
-            name: true,
-            email: true,
-          },
-        },
+        user: { select: { name: true, email: true } },
         platformAccounts: true,
       },
     });
@@ -192,9 +227,8 @@ export class InfluencersService {
     return influencers.map((inf) => this.formatInfluencer(inf));
   }
 
-  // ── Score helpers ────────────────────────────────────────────────────────
+  // ── Score helpers ─────────────────────────────────────────────────────────
 
-  /** Engagement-rate benchmark (%) per platform. */
   private readonly ER_BENCHMARK: Record<string, number> = {
     tiktok: 6, instagram: 3, youtube: 3, facebook: 1, x: 0.5, lemon8: 4,
   };
@@ -203,27 +237,14 @@ export class InfluencersService {
     return this.ER_BENCHMARK[platform.toLowerCase()] ?? 4;
   }
 
-  /**
-   * Quality Score (0–100) — Audience Quality
-   * = ER authenticity (60 pts) + views-to-followers ratio (40 pts)
-   *
-   * Low ER relative to benchmark → likely inflated followers (bot risk).
-   * Low avgViews / followers → same signal.
-   */
   private computeQualityScore(er: number, avgViews: number, followers: number, platform: string): number {
     const benchmark = this.benchmarkFor(platform);
-    // ER component: 100% of benchmark = 60 pts; capped at 60
     const erScore = Math.min(60, Math.round((er / Math.max(benchmark, 0.1)) * 60));
-    // Views ratio component: 20% ratio = 40 pts; typical threshold 10–20%
     const viewRatio = followers > 0 ? avgViews / followers : 0;
     const viewScore = Math.min(40, Math.round(viewRatio * 200));
-    return erScore + viewScore; // 0–100
+    return erScore + viewScore;
   }
 
-  /**
-   * Performance Score (0–100) — Composite
-   * Weights: Engagement Quality 30% + Audience Quality 30% + Growth Rate 25% + Content Consistency 15%
-   */
   private computePerformanceScore(
     er: number,
     avgViews: number,
@@ -234,17 +255,14 @@ export class InfluencersService {
   ): number {
     const benchmark = this.benchmarkFor(platform);
     const engagementQuality = Math.min(100, Math.round((er / Math.max(benchmark, 0.1)) * 100));
-    // Growth: 20% MoM = full score
     const growthQuality = Math.min(100, Math.round((growthRate / 20) * 100));
-    // Consistency proxy: stable views relative to follower base (30% ratio = 100)
     const consistencyQuality = Math.min(100, Math.round((followers > 0 ? avgViews / followers : 0) * 300));
-
     return Math.min(
       100,
       Math.round(
         engagementQuality * 0.30 +
-        qualityScore       * 0.30 +
-        growthQuality      * 0.25 +
+        qualityScore      * 0.30 +
+        growthQuality     * 0.25 +
         consistencyQuality * 0.15,
       ),
     );
@@ -257,25 +275,24 @@ export class InfluencersService {
     const avgViews = main.avgViews ?? 0;
     const followers = Math.max(main.followers ?? 0, 1);
     const platform = main.platform ?? '';
-
     const qualityScore = this.computeQualityScore(er, avgViews, followers, platform);
     const performanceScore = this.computePerformanceScore(er, avgViews, followers, platform, growthRate ?? 0, qualityScore);
     return { qualityScore, performanceScore };
   }
 
-  // ── Formatters ───────────────────────────────────────────────────────────
+  // ── Formatters ────────────────────────────────────────────────────────────
 
   private formatInfluencer(inf: any) {
-    const mainAccount = inf.platformAccounts.reduce(
-      (prev, current) => (prev.followers > current.followers ? prev : current),
-      inf.platformAccounts[0] || {},
-    );
-    const { qualityScore, performanceScore } = this.computeScores(
-      inf.platformAccounts,
-      inf.growthRate ?? 0,
-    );
+    const accounts = inf.platformAccounts ?? [];
+    const mainAccount = accounts.length
+      ? accounts.reduce((prev, current) =>
+          prev.followers > current.followers ? prev : current
+        )
+      : null;
 
-    const spotlightVideo = mainAccount.spotlightVideoId
+    const { qualityScore, performanceScore } = this.computeScores(accounts, inf.growthRate ?? 0);
+
+    const spotlightVideo = mainAccount?.spotlightVideoId
       ? {
           id: mainAccount.spotlightVideoId,
           title: mainAccount.spotlightVideoTitle || '',
@@ -285,27 +302,27 @@ export class InfluencersService {
 
     return {
       id: inf.id,
-      name: inf.user?.name || mainAccount.displayName || 'Unknown',
-      platforms: inf.platformAccounts.map((p) => p.platform),
-      followers: mainAccount.followers || 0,
-      followersByPlatform: inf.platformAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.followers }), {}),
-      avgViewsByPlatform: inf.platformAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avgViews }), {}),
-      engagementRate: mainAccount.engagementRate || 0,
+      name: inf.user?.name || mainAccount?.displayName || 'Unknown',
+      platforms: accounts.map((p) => p.platform),
+      followers: mainAccount?.followers ?? 0,
+      followersByPlatform: accounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.followers }), {}),
+      avgViewsByPlatform: accounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avgViews }), {}),
+      engagementRate: mainAccount?.engagementRate ?? 0,
       category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'Lifestyle'),
       performanceScore,
       ratePerPost: 0,
       stylePresent: Array.isArray(inf.styleTags) ? inf.styleTags : [],
-      avatarUrl: mainAccount.avatarUrl || null,
+      avatarUrl: mainAccount?.avatarUrl ?? null,
       spotlightVideo,
       meta: {
         country: 'Thailand',
         city: 'Bangkok',
         audienceCountryPercent: 70,
-        averageViews: mainAccount.avgViews || 0,
-        growthRate: inf.growthRate || 0,
+        averageViews: mainAccount?.avgViews ?? 0,
+        growthRate: inf.growthRate ?? 0,
         qualityScore,
-        responseRate: inf.responseRate || 0,
-        bio: inf.bio || null,
+        responseRate: inf.responseRate ?? 0,
+        bio: inf.bio ?? null,
       },
     };
   }
@@ -313,11 +330,7 @@ export class InfluencersService {
   async findOne(id: string) {
     const influencer = await this.prisma.influencerProfile.findUnique({
       where: { id },
-      include: {
-        user: true,
-        platformAccounts: true,
-        rateCards: true,
-      },
+      include: { user: true, platformAccounts: true, rateCards: true },
     });
     return influencer ? this.formatInfluencer(influencer) : null;
   }
@@ -361,10 +374,7 @@ export class InfluencersService {
       .map((inf) => this.formatInfluencer(inf));
   }
 
-  async claimProfile(
-    externalInfluencerId: string,
-    claimerInfluencerId: string,
-  ): Promise<void> {
+  async claimProfile(externalInfluencerId: string, claimerInfluencerId: string): Promise<void> {
     const [external, claimer] = await Promise.all([
       this.prisma.influencerProfile.findUnique({
         where: { id: externalInfluencerId },
@@ -383,30 +393,25 @@ export class InfluencersService {
     const claimerHandles = new Set(
       claimer.platformAccounts.map((a) => `${a.platform}:${a.handle.toLowerCase()}`),
     );
-
     const accountsToTransfer = external.platformAccounts.filter(
       (a) => !claimerHandles.has(`${a.platform}:${a.handle.toLowerCase()}`),
     );
 
     await this.prisma.$transaction([
-      // Transfer unique platform accounts to claimer
       ...accountsToTransfer.map((a) =>
         this.prisma.platformAccount.update({
           where: { id: a.id },
           data: { influencerId: claimerInfluencerId },
         }),
       ),
-      // Transfer profile events
       this.prisma.profileEvent.updateMany({
         where: { influencerId: externalInfluencerId },
         data: { influencerId: claimerInfluencerId },
       }),
-      // Mark external profile as claimed
       this.prisma.influencerProfile.update({
         where: { id: externalInfluencerId },
         data: { claimed: true, claimedByUserId: claimer.userId },
       }),
-      // Fill in claimer's empty fields from external
       this.prisma.influencerProfile.update({
         where: { id: claimerInfluencerId },
         data: {
@@ -422,8 +427,6 @@ export class InfluencersService {
     platform: string,
     handle: string,
   ): Promise<{ found: boolean; source?: 'db' | 'api'; influencer?: any }> {
-    await this.ttl.recordEvent('', 'SEARCH').catch(() => {});
-
     const cleanHandle = handle.replace(/^@/, '');
 
     const account = await this.prisma.platformAccount.findFirst({
@@ -459,7 +462,6 @@ export class InfluencersService {
       return { found: true, source: 'db', influencer: this.formatInfluencer(influencer) };
     }
 
-    // Not in DB — try live fetch from platform API
     if (platform.toLowerCase() === 'youtube') {
       const profile = await this.youtube.fetchProfile(cleanHandle);
       if (profile) {
@@ -470,7 +472,6 @@ export class InfluencersService {
           profile.videoTitles ?? [],
         );
 
-        // ── Persist as external profile so future searches skip the API ──
         const fakeAccount = [{
           platform: platform.toLowerCase(),
           followers: profile.followers,
@@ -491,8 +492,6 @@ export class InfluencersService {
             performanceScore,
             syncStatus: 'IDLE',
             lastSyncedAt: new Date(),
-            // nextRefreshAt: TTL service will set this on first checkAndFlag call;
-            // seed 7 days so a popular profile gets refreshed soon
             nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
             platformAccounts: {
               create: {
