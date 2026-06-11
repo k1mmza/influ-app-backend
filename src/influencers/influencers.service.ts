@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TtlService, INFLUENCER_SYNC_QUEUE } from '../sync/ttl.service';
 import { SyncJobData } from '../sync/sync.processor';
 import { YouTubeAdapter } from '../sync/adapters/youtube.adapter';
+import { TikTokAdapter } from '../sync/adapters/tiktok.adapter';
+import { InstagramAdapter } from '../sync/adapters/instagram.adapter';
 import { PlatformProfile } from '../sync/adapters/platform.adapter';
 import { AiAnalysisService, AiChannelAnalysis } from './ai-analysis.service';
 
@@ -15,6 +17,8 @@ export class InfluencersService {
     private ttl: TtlService,
     @InjectQueue(INFLUENCER_SYNC_QUEUE) private syncQueue: Queue<SyncJobData>,
     private youtube: YouTubeAdapter,
+    private tiktok: TikTokAdapter,
+    private instagram: InstagramAdapter,
     private aiAnalysis: AiAnalysisService,
   ) {}
 
@@ -460,81 +464,114 @@ export class InfluencersService {
     }
 
     // Not in DB — try live fetch from platform API
-    if (platform.toLowerCase() === 'youtube') {
-      const profile = await this.youtube.fetchProfile(cleanHandle);
+    const p = platform.toLowerCase();
+
+    let profile: PlatformProfile | null = null;
+    let aiData: AiChannelAnalysis | null = null;
+
+    if (p === 'youtube') {
+      profile = await this.youtube.fetchProfile(cleanHandle);
       if (profile) {
-        const aiData = await this.aiAnalysis.analyzeYouTubeChannel(
+        aiData = await this.aiAnalysis.analyzeYouTubeChannel(
           profile.displayName,
           profile.bio,
           profile.topVideoIds ?? [],
           profile.videoTitles ?? [],
         );
-
-        // ── Persist as external profile so future searches skip the API ──
-        const fakeAccount = [{
-          platform: platform.toLowerCase(),
-          followers: profile.followers,
-          engagementRate: profile.engagementRate,
-          avgViews: profile.avgViews,
-        }];
-        const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
-
-        const saved = await this.prisma.influencerProfile.create({
-          data: {
-            isExternal: true,
-            externalHandle: cleanHandle,
-            bio: aiData?.bio ?? profile.bio ?? null,
-            categories: aiData?.category ? [aiData.category] : [],
-            styleTags: aiData?.tags ?? [],
-            growthRate: profile.growthRate ?? null,
-            qualityScore,
-            performanceScore,
-            syncStatus: 'IDLE',
-            lastSyncedAt: new Date(),
-            // nextRefreshAt: TTL service will set this on first checkAndFlag call;
-            // seed 7 days so a popular profile gets refreshed soon
-            nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            platformAccounts: {
-              create: {
-                platform: platform.toLowerCase(),
-                handle: cleanHandle,
-                displayName: profile.displayName ?? null,
-                avatarUrl: profile.avatarUrl ?? null,
-                profileUrl: profile.profileUrl ?? null,
-                followers: profile.followers,
-                engagementRate: profile.engagementRate,
-                avgViews: profile.avgViews,
-                spotlightVideoId: profile.spotlightVideo?.id ?? null,
-                spotlightVideoTitle: profile.spotlightVideo?.title ?? null,
-              },
-            },
-          },
-          include: {
-            platformAccounts: true,
-            user: { select: { name: true, email: true } },
-          },
-        });
-
-        await this.ttl.recordEvent(saved.id, 'SEARCH');
-
-        const formatted = this.formatInfluencer(saved);
-        return {
-          found: true,
-          source: 'api',
-          influencer: {
-            ...formatted,
-            meta: {
-              ...formatted.meta,
-              country: profile.country ?? aiData?.audienceCountry ?? null,
-              audienceGender: aiData?.audienceGender ?? null,
-              audienceAgeGroup: aiData?.audienceAgeGroup ?? null,
-            },
-          },
-        };
+      }
+    } else if (p === 'tiktok') {
+      profile = await this.tiktok.fetchProfile(cleanHandle);
+      if (profile) {
+        aiData = await this.aiAnalysis.analyzeProfile(
+          'TikTok',
+          profile.displayName,
+          profile.bio,
+          profile.videoTitles ?? [],
+        );
+      }
+    } else if (p === 'instagram') {
+      profile = await this.instagram.fetchProfile(cleanHandle);
+      if (profile) {
+        aiData = await this.aiAnalysis.analyzeProfile(
+          'Instagram',
+          profile.displayName,
+          profile.bio,
+          profile.videoTitles ?? [],
+        );
       }
     }
 
+    if (profile) {
+      return this.saveAndReturnExternalProfile(profile, p, cleanHandle, aiData);
+    }
+
     return { found: false };
+  }
+
+  private async saveAndReturnExternalProfile(
+    profile: PlatformProfile,
+    platform: string,
+    handle: string,
+    aiData: AiChannelAnalysis | null,
+  ) {
+    const fakeAccount = [{
+      platform,
+      followers: profile.followers,
+      engagementRate: profile.engagementRate,
+      avgViews: profile.avgViews,
+    }];
+    const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+
+    const saved = await this.prisma.influencerProfile.create({
+      data: {
+        isExternal: true,
+        externalHandle: handle,
+        bio: aiData?.bio ?? profile.bio ?? null,
+        categories: aiData?.category ? [aiData.category] : [],
+        styleTags: aiData?.tags ?? [],
+        growthRate: profile.growthRate ?? null,
+        qualityScore,
+        performanceScore,
+        syncStatus: 'IDLE',
+        lastSyncedAt: new Date(),
+        nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        platformAccounts: {
+          create: {
+            platform,
+            handle,
+            displayName: profile.displayName ?? null,
+            avatarUrl: profile.avatarUrl ?? null,
+            profileUrl: profile.profileUrl ?? null,
+            followers: profile.followers,
+            engagementRate: profile.engagementRate,
+            avgViews: profile.avgViews,
+            spotlightVideoId: profile.spotlightVideo?.id ?? null,
+            spotlightVideoTitle: profile.spotlightVideo?.title ?? null,
+          },
+        },
+      },
+      include: {
+        platformAccounts: true,
+        user: { select: { name: true, email: true } },
+      },
+    });
+
+    await this.ttl.recordEvent(saved.id, 'SEARCH');
+
+    const formatted = this.formatInfluencer(saved);
+    return {
+      found: true,
+      source: 'api' as const,
+      influencer: {
+        ...formatted,
+        meta: {
+          ...formatted.meta,
+          country: profile.country ?? aiData?.audienceCountry ?? null,
+          audienceGender: aiData?.audienceGender ?? null,
+          audienceAgeGroup: aiData?.audienceAgeGroup ?? null,
+        },
+      },
+    };
   }
 
   private formatFromPlatformProfile(

@@ -112,6 +112,74 @@ Respond with valid JSON only. No markdown fences, no explanation.`;
     }
   }
 
+  /**
+   * Generic profile analysis for TikTok / Instagram — no transcripts,
+   * uses bio + recent post captions instead.
+   */
+  async analyzeProfile(
+    platform: string,
+    displayName: string,
+    bio: string | null,
+    postCaptions: string[],
+  ): Promise<AiChannelAnalysis | null> {
+    if (!this.client) return null;
+
+    const parts: string[] = [`Platform: ${platform}`, `Creator Name: ${displayName}`];
+    if (bio) parts.push(`Bio: ${bio.substring(0, 300)}`);
+    if (postCaptions.length > 0) {
+      const list = postCaptions.slice(0, 10).map((c, i) => `${i + 1}. ${c.substring(0, 150)}`).join('\n');
+      parts.push(`Recent Post Captions:\n${list}`);
+    }
+    const context = parts.join('\n\n');
+
+    const prompt = `Analyze this ${platform} creator profile and return a JSON object with exactly six fields:
+- "bio": A compelling 1-2 sentence creator description written in third person (max 150 characters)
+- "tags": An array of 2-4 relevant content tags chosen ONLY from this list: ${VALID_TAGS.join(', ')}
+- "category": The single best-fit category chosen ONLY from the same list
+- "audienceGender": Estimated dominant audience gender — must be exactly one of: "Female", "Male", "Mixed"
+- "audienceAgeGroup": Estimated primary audience age group — must be exactly one of: "18-24", "25-34", "35-44", "45+"
+- "audienceCountry": Estimated top audience country as a full English country name (e.g. "United States"), or null if unclear
+
+Base demographic estimates on the content style, language, topics, and cultural references.
+
+${context}
+
+Respond with valid JSON only. No markdown fences, no explanation.`;
+
+    try {
+      const message = await this.client.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 300,
+        messages: [{ role: 'user', content: prompt }],
+      });
+
+      const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : '';
+      const json = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      const parsed = JSON.parse(json) as {
+        bio?: string; tags?: unknown; category?: string;
+        audienceGender?: string; audienceAgeGroup?: string; audienceCountry?: string | null;
+      };
+
+      const rawTags = Array.isArray(parsed.tags) ? (parsed.tags as string[]) : [];
+      const tags = rawTags.filter((t) => VALID_TAGS.includes(t)).slice(0, 4);
+      const category = VALID_TAGS.includes(parsed.category ?? '') ? parsed.category! : (tags[0] ?? 'Lifestyle');
+      const VALID_GENDERS = ['Female', 'Male', 'Mixed'];
+      const VALID_AGE_GROUPS = ['18-24', '25-34', '35-44', '45+'];
+
+      return {
+        bio: (parsed.bio ?? '').substring(0, 200),
+        tags,
+        category,
+        audienceGender: VALID_GENDERS.includes(parsed.audienceGender ?? '') ? parsed.audienceGender! : null,
+        audienceAgeGroup: VALID_AGE_GROUPS.includes(parsed.audienceAgeGroup ?? '') ? parsed.audienceAgeGroup! : null,
+        audienceCountry: parsed.audienceCountry ?? null,
+      };
+    } catch (err: any) {
+      this.logger.error(`AI profile analysis failed for ${platform}/${displayName}: ${err.message}`);
+      return null;
+    }
+  }
+
   private async fetchTranscriptSnippets(videoIds: string[]): Promise<string[]> {
     const snippets: string[] = [];
     for (const id of videoIds) {
