@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,11 +7,13 @@ import { SyncJobData } from '../sync/sync.processor';
 import { YouTubeAdapter } from '../sync/adapters/youtube.adapter';
 import { TikTokAdapter } from '../sync/adapters/tiktok.adapter';
 import { InstagramAdapter } from '../sync/adapters/instagram.adapter';
-import { PlatformProfile } from '../sync/adapters/platform.adapter';
+import { PlatformProfile, PostEngagement } from '../sync/adapters/platform.adapter';
 import { AiAnalysisService, AiChannelAnalysis } from './ai-analysis.service';
 
 @Injectable()
 export class InfluencersService {
+  private readonly logger = new Logger(InfluencersService.name);
+
   constructor(
     private prisma: PrismaService,
     private ttl: TtlService,
@@ -267,15 +269,91 @@ export class InfluencersService {
     return { qualityScore, performanceScore };
   }
 
+  /**
+   * Audience Authenticity Score (0–100)
+   * Signals: comment-to-like ratio (30) + ER vs benchmark (30) + view/follower ratio (20) + like variance (20)
+   */
+  private computeAudienceQualityScore(
+    posts: PostEngagement[],
+    er: number,
+    platform: string,
+    avgViews: number,
+    followers: number,
+  ): number {
+    const benchmark = this.benchmarkFor(platform);
+
+    // 1. Comment-to-like ratio (30pts) — bots like but rarely comment
+    let commentScore = 10; // neutral default when no data
+    if (posts.length > 0) {
+      const avgLikes = posts.reduce((s, p) => s + p.likes, 0) / posts.length;
+      const avgComments = posts.reduce((s, p) => s + p.comments, 0) / posts.length;
+      const ratio = avgLikes > 0 ? avgComments / avgLikes : 0;
+      if (ratio >= 0.05) commentScore = 30;       // >5%: very authentic
+      else if (ratio >= 0.02) commentScore = 22;  // 2-5%: normal
+      else if (ratio >= 0.005) commentScore = 12; // 0.5-2%: below avg
+      else if (ratio >= 0.001) commentScore = 5;  // <0.5%: suspicious
+      else commentScore = 0;
+    }
+
+    // 2. ER vs benchmark (30pts) — low ER vs peers = inflated followers
+    const erScore = Math.min(30, Math.round((er / Math.max(benchmark, 0.1)) * 30));
+
+    // 3. View-to-follower ratio (20pts) — fake followers don't watch
+    const viewRatio = followers > 0 ? avgViews / followers : 0;
+    const viewScore = Math.min(20, Math.round(viewRatio * 100));
+
+    // 4. Like variance (20pts) — uniform likes = purchased; natural variance = organic
+    let varianceScore = 10; // neutral default
+    if (posts.length >= 3) {
+      const likes = posts.map((p) => p.likes);
+      const mean = likes.reduce((s, l) => s + l, 0) / likes.length;
+      if (mean > 0) {
+        const stdDev = Math.sqrt(likes.reduce((s, l) => s + (l - mean) ** 2, 0) / likes.length);
+        const cv = stdDev / mean;
+        if (cv >= 0.5) varianceScore = 20;
+        else if (cv >= 0.3) varianceScore = 15;
+        else if (cv >= 0.15) varianceScore = 10;
+        else if (cv >= 0.05) varianceScore = 5;
+        else varianceScore = 0;
+      }
+    }
+
+    return Math.min(100, commentScore + erScore + viewScore + varianceScore);
+  }
+
   // ── Formatters ───────────────────────────────────────────────────────────
 
   private formatInfluencer(inf: any) {
-    const mainAccount = inf.platformAccounts.reduce(
-      (prev, current) => (prev.followers > current.followers ? prev : current),
-      inf.platformAccounts[0] || {},
-    );
+    // Stub for async Apify fetch in progress
+    if (inf.isExternal && inf.syncStatus === 'SYNCING' && !inf.platformAccounts?.length) {
+      return {
+        id: inf.id,
+        handle: inf.externalHandle ?? null,
+        name: inf.externalHandle ?? 'Loading...',
+        platforms: [],
+        followers: 0,
+        followersByPlatform: {},
+        avgViewsByPlatform: {},
+        engagementRate: 0,
+        category: 'Lifestyle',
+        performanceScore: 0,
+        ratePerPost: 0,
+        stylePresent: [],
+        avatarUrl: null,
+        spotlightVideo: null,
+        syncStatus: 'SYNCING',
+        meta: { country: null, city: null, audienceCountryPercent: null, averageViews: 0, growthRate: 0, qualityScore: 0, responseRate: 0, bio: null },
+      };
+    }
+
+    const mainAccount = inf.platformAccounts?.length
+      ? inf.platformAccounts.reduce(
+          (prev, current) => (prev.followers > current.followers ? prev : current),
+          inf.platformAccounts[0],
+        )
+      : {};
     const { qualityScore, performanceScore } = this.computeScores(
-      inf.platformAccounts,
+      inf.platformAccounts ?? [],
       inf.growthRate ?? 0,
     );
 
@@ -283,12 +361,16 @@ export class InfluencersService {
       ? {
           id: mainAccount.spotlightVideoId,
           title: mainAccount.spotlightVideoTitle || '',
-          thumbnail: `https://img.youtube.com/vi/${mainAccount.spotlightVideoId}/hqdefault.jpg`,
+          thumbnail: mainAccount.spotlightThumbnailUrl
+            || (mainAccount.platform === 'youtube'
+              ? `https://img.youtube.com/vi/${mainAccount.spotlightVideoId}/hqdefault.jpg`
+              : ''),
         }
       : null;
 
     return {
       id: inf.id,
+      handle: mainAccount.handle ?? null,
       name: inf.user?.name || mainAccount.displayName || 'Unknown',
       platforms: inf.platformAccounts.map((p) => p.platform),
       followers: mainAccount.followers || 0,
@@ -301,13 +383,15 @@ export class InfluencersService {
       stylePresent: Array.isArray(inf.styleTags) ? inf.styleTags : [],
       avatarUrl: mainAccount.avatarUrl || null,
       spotlightVideo,
+      syncStatus: inf.syncStatus ?? 'IDLE',
       meta: {
-        country: 'Thailand',
-        city: 'Bangkok',
-        audienceCountryPercent: 70,
+        country: inf.country ?? null,
+        city: null,
+        audienceCountryPercent: null,
         averageViews: mainAccount.avgViews || 0,
         growthRate: inf.growthRate || 0,
         qualityScore,
+        audienceQualityScore: inf.audienceQualityScore ?? null,
         responseRate: inf.responseRate || 0,
         bio: inf.bio || null,
       },
@@ -425,7 +509,7 @@ export class InfluencersService {
   async lookupByHandle(
     platform: string,
     handle: string,
-  ): Promise<{ found: boolean; source?: 'db' | 'api'; influencer?: any }> {
+  ): Promise<{ found: boolean; source?: 'db' | 'api'; loading?: boolean; influencer?: any }> {
     await this.ttl.recordEvent('', 'SEARCH').catch(() => {});
 
     const cleanHandle = handle.replace(/^@/, '');
@@ -447,6 +531,10 @@ export class InfluencersService {
 
     if (account) {
       const influencer = account.influencer;
+      // Still loading from a previous async fetch
+      if (influencer.syncStatus === 'SYNCING') {
+        return { found: true, source: 'db' as const, loading: true, influencer: this.formatInfluencer(influencer) };
+      }
       await this.ttl.recordEvent(influencer.id, 'SEARCH');
       const shouldSync = await this.ttl.checkAndFlag(influencer.id);
       if (shouldSync) {
@@ -460,52 +548,120 @@ export class InfluencersService {
           handle: cleanHandle,
         });
       }
-      return { found: true, source: 'db', influencer: this.formatInfluencer(influencer) };
+      return { found: true, source: 'db' as const, influencer: this.formatInfluencer(influencer) };
     }
 
-    // Not in DB — try live fetch from platform API
     const p = platform.toLowerCase();
 
-    let profile: PlatformProfile | null = null;
-    let aiData: AiChannelAnalysis | null = null;
-
+    // YouTube is fast — keep synchronous
     if (p === 'youtube') {
-      profile = await this.youtube.fetchProfile(cleanHandle);
+      const profile = await this.youtube.fetchProfile(cleanHandle);
       if (profile) {
-        aiData = await this.aiAnalysis.analyzeYouTubeChannel(
-          profile.displayName,
-          profile.bio,
-          profile.topVideoIds ?? [],
-          profile.videoTitles ?? [],
+        const aiData = await this.aiAnalysis.analyzeYouTubeChannel(
+          profile.displayName, profile.bio, profile.topVideoIds ?? [], profile.videoTitles ?? [],
         );
+        return this.saveAndReturnExternalProfile(profile, p, cleanHandle, aiData);
       }
-    } else if (p === 'tiktok') {
-      profile = await this.tiktok.fetchProfile(cleanHandle);
-      if (profile) {
-        aiData = await this.aiAnalysis.analyzeProfile(
-          'TikTok',
-          profile.displayName,
-          profile.bio,
-          profile.videoTitles ?? [],
-        );
-      }
-    } else if (p === 'instagram') {
-      profile = await this.instagram.fetchProfile(cleanHandle);
-      if (profile) {
-        aiData = await this.aiAnalysis.analyzeProfile(
-          'Instagram',
-          profile.displayName,
-          profile.bio,
-          profile.videoTitles ?? [],
-        );
-      }
+      return { found: false };
     }
 
-    if (profile) {
-      return this.saveAndReturnExternalProfile(profile, p, cleanHandle, aiData);
+    // TikTok / Instagram — create stub immediately, fetch in background
+    if (p === 'tiktok' || p === 'instagram') {
+      const stub = await this.prisma.influencerProfile.create({
+        data: {
+          isExternal: true,
+          externalHandle: cleanHandle,
+          syncStatus: 'SYNCING',
+          lastSyncedAt: new Date(),
+          nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          platformAccounts: {
+            create: { platform: p, handle: cleanHandle, displayName: cleanHandle },
+          },
+        },
+        include: { platformAccounts: true, user: { select: { name: true, email: true } } },
+      });
+      this.fetchAndUpdateProfile(stub.id, p, cleanHandle).catch(() => {});
+      return { found: true, source: 'api' as const, loading: true, influencer: this.formatInfluencer(stub) };
     }
 
     return { found: false };
+  }
+
+  private async fetchAndUpdateProfile(profileId: string, platform: string, handle: string): Promise<void> {
+    try {
+      let profile: PlatformProfile | null = null;
+      let aiData: AiChannelAnalysis | null = null;
+
+      if (platform === 'tiktok') {
+        profile = await this.tiktok.fetchProfile(handle);
+        if (profile) {
+          aiData = await this.aiAnalysis.analyzeProfile('TikTok', profile.displayName, profile.bio, profile.videoTitles ?? []);
+        }
+      } else if (platform === 'instagram') {
+        profile = await this.instagram.fetchProfile(handle);
+        if (profile) {
+          aiData = await this.aiAnalysis.analyzeProfile('Instagram', profile.displayName, profile.bio, profile.videoTitles ?? []);
+        }
+      }
+
+      if (!profile) {
+        await this.prisma.influencerProfile.update({ where: { id: profileId }, data: { syncStatus: 'IDLE' } });
+        return;
+      }
+
+      const fakeAccount = [{ platform, followers: profile.followers, engagementRate: profile.engagementRate, avgViews: profile.avgViews }];
+      const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+      const country = profile.country ?? aiData?.audienceCountry ?? null;
+      const audienceQualityScore = this.computeAudienceQualityScore(
+        profile.postEngagements ?? [],
+        profile.engagementRate,
+        platform,
+        profile.avgViews,
+        profile.followers,
+      );
+
+      // Download avatar now so the CDN URL never expires in our DB
+      const avatarUrl = profile.avatarUrl
+        ? (await this.downloadAsDataUrl(profile.avatarUrl)) ?? profile.avatarUrl
+        : null;
+
+      await this.prisma.$transaction([
+        this.prisma.influencerProfile.update({
+          where: { id: profileId },
+          data: {
+            bio: aiData?.bio ?? profile.bio ?? null,
+            categories: (aiData?.category ? [aiData.category] : []) as any,
+            styleTags: (aiData?.tags ?? []) as any,
+            growthRate: profile.growthRate ?? null,
+            country,
+            qualityScore,
+            performanceScore,
+            audienceQualityScore,
+            syncStatus: 'IDLE',
+            lastSyncedAt: new Date(),
+          },
+        }),
+        this.prisma.platformAccount.updateMany({
+          where: { influencerId: profileId, platform },
+          data: {
+            displayName: profile.displayName ?? null,
+            avatarUrl,
+            profileUrl: profile.profileUrl ?? null,
+            followers: profile.followers,
+            engagementRate: profile.engagementRate,
+            avgViews: profile.avgViews,
+            spotlightVideoId: profile.spotlightVideo?.id ?? null,
+            spotlightVideoTitle: profile.spotlightVideo?.title ?? null,
+            spotlightThumbnailUrl: profile.spotlightVideo?.thumbnail ?? null,
+          },
+        }),
+      ]);
+
+      await this.ttl.recordEvent(profileId, 'SEARCH');
+    } catch (err: any) {
+      this.logger.error(`Background fetch failed for ${platform}/${handle}: ${err.message}`);
+      await this.prisma.influencerProfile.update({ where: { id: profileId }, data: { syncStatus: 'IDLE' } }).catch(() => {});
+    }
   }
 
   private async saveAndReturnExternalProfile(
@@ -521,6 +677,15 @@ export class InfluencersService {
       avgViews: profile.avgViews,
     }];
     const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+    const audienceQualityScore = this.computeAudienceQualityScore(
+      profile.postEngagements ?? [],
+      profile.engagementRate,
+      platform,
+      profile.avgViews,
+      profile.followers,
+    );
+
+    const country = profile.country ?? aiData?.audienceCountry ?? null;
 
     const saved = await this.prisma.influencerProfile.create({
       data: {
@@ -530,8 +695,10 @@ export class InfluencersService {
         categories: aiData?.category ? [aiData.category] : [],
         styleTags: aiData?.tags ?? [],
         growthRate: profile.growthRate ?? null,
+        country,
         qualityScore,
         performanceScore,
+        audienceQualityScore,
         syncStatus: 'IDLE',
         lastSyncedAt: new Date(),
         nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -547,6 +714,7 @@ export class InfluencersService {
             avgViews: profile.avgViews,
             spotlightVideoId: profile.spotlightVideo?.id ?? null,
             spotlightVideoTitle: profile.spotlightVideo?.title ?? null,
+            spotlightThumbnailUrl: profile.spotlightVideo?.thumbnail ?? null,
           },
         },
       },
@@ -566,7 +734,6 @@ export class InfluencersService {
         ...formatted,
         meta: {
           ...formatted.meta,
-          country: profile.country ?? aiData?.audienceCountry ?? null,
           audienceGender: aiData?.audienceGender ?? null,
           audienceAgeGroup: aiData?.audienceAgeGroup ?? null,
         },
@@ -618,5 +785,20 @@ export class InfluencersService {
         profileUrl: profile.profileUrl,
       },
     };
+  }
+
+  private async downloadAsDataUrl(url: string): Promise<string | null> {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) return null;
+      const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+      const buffer = await res.arrayBuffer();
+      // Skip if image is unreasonably large (>300KB)
+      if (buffer.byteLength > 300_000) return null;
+      const base64 = Buffer.from(buffer).toString('base64');
+      return `data:${contentType};base64,${base64}`;
+    } catch {
+      return null;
+    }
   }
 }

@@ -91,9 +91,11 @@ model InfluencerProfile {
   availabilityStatus  String?
   responseRate        Float?
   avgResponseTimeHrs  Int?
-  performanceScore    Float?
-  qualityScore        Float?
-  growthRate          Float?
+  performanceScore      Float?
+  qualityScore          Float?
+  audienceQualityScore  Float?
+  growthRate            Float?
+  country             String?
   updatedAt           DateTime @updatedAt
 
   // Sync metadata
@@ -183,8 +185,9 @@ model PlatformAccount {
   growthRate        Float             @default(0)
   isPrimary         Boolean           @default(false)
   syncedAt          DateTime          @default(now())
-  spotlightVideoId    String?
-  spotlightVideoTitle String?
+  spotlightVideoId       String?
+  spotlightVideoTitle    String?
+  spotlightThumbnailUrl  String?
 
   // Relationships
   audienceInsights AudienceInsight[]

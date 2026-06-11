@@ -40,7 +40,7 @@ export class InstagramAdapter extends PlatformAdapter {
     const clean = handle.replace(/^@/, '');
 
     try {
-      const items = await this.runActor(token, { usernames: [clean] });
+      const items = await this.runActor(token, { usernames: [clean], resultsLimit: 5 });
       if (!items?.length) return null;
 
       const profile = items[0] as ApifyInstagramProfile;
@@ -50,6 +50,19 @@ export class InstagramAdapter extends PlatformAdapter {
       // ER = (avg likes + avg comments) / followers × 100
       const engagementRate = this.calcEngagementRate(posts, followers);
       const avgViews = this.calcAvgViews(posts, followers);
+
+      // Pick most-liked post as spotlight
+      const topPost = posts.reduce<ApifyInstagramPost | null>(
+        (best, p) => (best === null || (p.likesCount ?? 0) > (best.likesCount ?? 0) ? p : best),
+        null,
+      );
+      const spotlightVideo = topPost?.shortCode
+        ? {
+            id: topPost.shortCode,
+            title: topPost.caption?.substring(0, 100) ?? '',
+            thumbnail: topPost.displayUrl ?? '',
+          }
+        : undefined;
 
       return {
         handle: clean,
@@ -61,11 +74,12 @@ export class InstagramAdapter extends PlatformAdapter {
         growthRate: 0,
         profileUrl: `https://www.instagram.com/${clean}/`,
         avatarUrl: profile.profilePicUrlHd ?? profile.profilePicUrl ?? undefined,
-        // Extract captions for AI analysis via videoTitles field
-        videoTitles: posts
-          .map((p) => p.caption)
-          .filter((c): c is string => !!c)
-          .slice(0, 10),
+        spotlightVideo,
+        videoTitles: posts.map((p) => p.caption).filter((c): c is string => !!c).slice(0, 10),
+        postEngagements: posts.map((p) => ({
+          likes: p.likesCount ?? 0,
+          comments: p.commentsCount ?? 0,
+        })),
       };
     } catch (err: any) {
       this.logger.error(`Instagram fetch failed for "${handle}": ${err.message}`);
@@ -96,7 +110,7 @@ export class InstagramAdapter extends PlatformAdapter {
   }
 
   private async runActor(token: string, input: object): Promise<any[] | null> {
-    const url = `${this.base}/acts/${this.actorId}/run-sync-get-dataset-items?token=${token}&timeout=60&memory=256`;
+    const url = `${this.base}/acts/${this.actorId}/run-sync-get-dataset-items?token=${token}&timeout=60&memory=512`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

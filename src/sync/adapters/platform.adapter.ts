@@ -1,3 +1,9 @@
+export interface PostEngagement {
+  likes: number;
+  comments: number;
+  views?: number;
+}
+
 export interface PlatformProfile {
   handle: string;
   displayName: string;
@@ -16,6 +22,7 @@ export interface PlatformProfile {
   };
   topVideoIds?: string[];
   videoTitles?: string[];
+  postEngagements?: PostEngagement[];
 }
 
 export abstract class PlatformAdapter {

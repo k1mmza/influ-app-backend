@@ -1,25 +1,30 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PlatformAdapter, PlatformProfile } from './platform.adapter';
 
-interface ApifyTikTokUser {
-  uniqueId?: string;
-  nickname?: string;
-  signature?: string;
-  avatarLarger?: string;
-  followerCount?: number;
-  heartCount?: number;
-  videoCount?: number;
-  region?: string;
-}
-
-interface ApifyTikTokVideo {
+interface ApifyTikTokItem {
+  id?: string;
+  text?: string;
+  webVideoUrl?: string;
   playCount?: number;
   diggCount?: number;
   commentCount?: number;
   shareCount?: number;
-  text?: string;
-  coverUrl?: string;
-  id?: string;
+  authorMeta?: {
+    name?: string;
+    nickName?: string;
+    signature?: string;
+    avatar?: string;
+    originalAvatarUrl?: string;
+    fans?: number;
+    heart?: number;
+    video?: number;
+    verified?: boolean;
+    bioLink?: string;
+  };
+  videoMeta?: {
+    coverUrl?: string;
+    originalCoverUrl?: string;
+  };
 }
 
 @Injectable()
@@ -41,41 +46,55 @@ export class TikTokAdapter extends PlatformAdapter {
     try {
       const items = await this.runActor(token, {
         profiles: [`@${clean}`],
-        resultsPerPage: 20,
+        resultsPerPage: 5,
         shouldDownloadVideos: false,
         shouldDownloadCovers: false,
       });
 
       if (!items?.length) return null;
 
-      // First item is the user profile, remaining items are videos
-      const user = items[0] as ApifyTikTokUser;
-      const videos = items.slice(1) as ApifyTikTokVideo[];
+      // Each item is a video; user profile is nested in authorMeta of the first item
+      const firstItem = items[0] as ApifyTikTokItem;
+      const author = firstItem.authorMeta;
+      const videos = items as ApifyTikTokItem[];
 
-      const followers = user.followerCount ?? 0;
-      const videoCount = user.videoCount ?? 0;
+      const followers = author?.fans ?? 0;
+      const totalHearts = author?.heart ?? 0;
+      const videoCount = author?.video ?? 0;
 
-      // ER = (likes + comments + shares) / views × 100 from recent videos
-      // Fall back to heartCount / followers / videoCount proxy if no video data
-      const engagementRate = this.calcEngagementRate(videos, user.heartCount ?? 0, followers, videoCount);
+      const engagementRate = this.calcEngagementRate(videos, totalHearts, followers, videoCount);
       const avgViews = this.calcAvgViews(videos);
 
-      const countryCode = user.region;
-      const country = countryCode
-        ? (new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ?? countryCode)
+      // Pick most-viewed video as spotlight
+      const topVideo = videos.reduce<ApifyTikTokItem | null>(
+        (best, v) => (best === null || (v.playCount ?? 0) > (best.playCount ?? 0) ? v : best),
+        null,
+      );
+      const spotlightVideo = topVideo?.id
+        ? {
+            id: topVideo.id,
+            title: topVideo.text?.substring(0, 100) ?? '',
+            thumbnail: topVideo.videoMeta?.coverUrl ?? topVideo.videoMeta?.originalCoverUrl ?? '',
+          }
         : undefined;
 
       return {
         handle: clean,
-        displayName: user.nickname ?? clean,
-        bio: user.signature ?? null,
+        displayName: author?.nickName ?? author?.name ?? clean,
+        bio: author?.signature ?? null,
         followers,
         avgViews,
         engagementRate,
         growthRate: 0,
         profileUrl: `https://www.tiktok.com/@${clean}`,
-        country,
-        avatarUrl: user.avatarLarger ?? undefined,
+        avatarUrl: author?.avatar ?? author?.originalAvatarUrl ?? undefined,
+        spotlightVideo,
+        videoTitles: videos.map((v) => v.text).filter((t): t is string => !!t).slice(0, 10),
+        postEngagements: videos.map((v) => ({
+          likes: v.diggCount ?? 0,
+          comments: v.commentCount ?? 0,
+          views: v.playCount ?? 0,
+        })),
       };
     } catch (err: any) {
       this.logger.error(`TikTok fetch failed for "${handle}": ${err.message}`);
@@ -84,7 +103,7 @@ export class TikTokAdapter extends PlatformAdapter {
   }
 
   private calcEngagementRate(
-    videos: ApifyTikTokVideo[],
+    videos: ApifyTikTokItem[],
     totalHearts: number,
     followers: number,
     videoCount: number,
@@ -102,8 +121,6 @@ export class TikTokAdapter extends PlatformAdapter {
         return parseFloat(((totals.eng / totals.views) * 100).toFixed(2));
       }
     }
-
-    // Fallback: avg likes per video / followers
     if (followers > 0 && videoCount > 0) {
       const avgLikes = totalHearts / videoCount;
       return parseFloat(((avgLikes / followers) * 100).toFixed(2));
@@ -111,14 +128,14 @@ export class TikTokAdapter extends PlatformAdapter {
     return 0;
   }
 
-  private calcAvgViews(videos: ApifyTikTokVideo[]): number {
+  private calcAvgViews(videos: ApifyTikTokItem[]): number {
     if (!videos.length) return 0;
     const total = videos.reduce((sum, v) => sum + (v.playCount ?? 0), 0);
     return Math.round(total / videos.length);
   }
 
   private async runActor(token: string, input: object): Promise<any[] | null> {
-    const url = `${this.base}/acts/${this.actorId}/run-sync-get-dataset-items?token=${token}&timeout=60&memory=256`;
+    const url = `${this.base}/acts/${this.actorId}/run-sync-get-dataset-items?token=${token}&timeout=60&memory=512`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
