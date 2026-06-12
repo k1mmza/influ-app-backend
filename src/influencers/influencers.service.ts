@@ -359,6 +359,7 @@ export class InfluencersService {
         avatarUrl: null,
         spotlightVideo: null,
         syncStatus: 'SYNCING',
+        lastDataPulledAt: null,
         rateCardFileUrl: null,
         meta: { country: null, city: null, audienceCountryPercent: null, averageViews: 0, growthRate: 0, qualityScore: 0, responseRate: 0, bio: null },
       };
@@ -400,6 +401,7 @@ export class InfluencersService {
       avatarUrl: mainAccount?.avatarUrl ?? null,
       spotlightVideo,
       syncStatus: inf.syncStatus ?? 'IDLE',
+      lastDataPulledAt: mainAccount?.syncedAt ?? inf.lastSyncedAt ?? null,
       rateCardFileUrl: inf.rateCardFileUrl ?? null,
       meta: {
         country: inf.country ?? null,
