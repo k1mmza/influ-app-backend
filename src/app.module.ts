@@ -11,7 +11,7 @@ import { ProfileModule } from './profile/profile.module';
 import { SyncModule } from './sync/sync.module';
 import { SmartPlanModule } from './smart-plan/smart-plan.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
-import { YouTubeConnectModule } from './youtube-connect/youtube-connect.module';
+import { PlatformConnectModule } from './platform-connect/platform-connect.module';
 
 @Module({
   imports: [
@@ -30,7 +30,7 @@ import { YouTubeConnectModule } from './youtube-connect/youtube-connect.module';
     SyncModule,
     SmartPlanModule,
     CampaignsModule,
-    YouTubeConnectModule,
+    PlatformConnectModule,
   ],
   controllers: [AppController],
   providers: [AppService],

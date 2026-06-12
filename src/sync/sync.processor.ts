@@ -7,7 +7,7 @@ import { TikTokAdapter } from './adapters/tiktok.adapter';
 import { InstagramAdapter } from './adapters/instagram.adapter';
 import { YouTubeAdapter } from './adapters/youtube.adapter';
 import { PlatformAdapter } from './adapters/platform.adapter';
-import { YouTubeConnectService } from '../youtube-connect/youtube-connect.service';
+import { PlatformConnectService } from '../platform-connect/platform-connect.service';
 
 export interface SyncJobData {
   influencerId: string;
@@ -26,7 +26,7 @@ export class SyncProcessor extends WorkerHost {
     tiktok: TikTokAdapter,
     instagram: InstagramAdapter,
     youtube: YouTubeAdapter,
-    @Optional() private ytConnect: YouTubeConnectService,
+    @Optional() private platformConnect: PlatformConnectService,
   ) {
     super();
     this.adapters = new Map<string, PlatformAdapter>([
@@ -47,13 +47,13 @@ export class SyncProcessor extends WorkerHost {
 
     try {
       // For YouTube: prefer OAuth path when refresh token is available
-      if (platform.toLowerCase() === 'youtube' && this.ytConnect) {
+      if (this.platformConnect) {
         const linked = await this.prisma.platformAccount.findFirst({
-          where: { influencerId, platform: 'youtube', refreshToken: { not: null } },
+          where: { influencerId, platform: platform.toLowerCase(), refreshToken: { not: null } },
         });
         if (linked) {
           this.logger.log(`Using OAuth tokens for ${platform}/@${handle}`);
-          await this.ytConnect.syncLinkedAccount(linked.id);
+          await this.platformConnect.syncLinkedAccount(linked.id);
           this.logger.log(`OAuth sync done for ${platform}/@${handle}`);
           return;
         }
