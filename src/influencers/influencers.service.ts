@@ -365,9 +365,18 @@ export class InfluencersService {
       };
     }
 
+    const PLATFORM_ORDER = ['youtube', 'tiktok', 'instagram'];
     const accounts = inf.platformAccounts ?? [];
-    const mainAccount = accounts.length
-      ? accounts.reduce((prev, current) =>
+
+    // Sort by canonical order; platforms not in the list go last
+    const sortedAccounts = [...accounts].sort((a, b) => {
+      const ai = PLATFORM_ORDER.indexOf(a.platform);
+      const bi = PLATFORM_ORDER.indexOf(b.platform);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+
+    const mainAccount = sortedAccounts.length
+      ? sortedAccounts.reduce((prev, current) =>
           prev.followers > current.followers ? prev : current
         )
       : null;
@@ -385,14 +394,34 @@ export class InfluencersService {
         }
       : null;
 
+    // Per-platform lookup maps for the frontend switcher
+    const spotlightByPlatform = sortedAccounts.reduce((acc, p) => ({
+      ...acc,
+      [p.platform]: p.spotlightVideoId
+        ? {
+            id: p.spotlightVideoId,
+            title: p.spotlightVideoTitle || '',
+            thumbnail: p.spotlightThumbnailUrl
+              || (p.platform === 'youtube'
+                ? `https://img.youtube.com/vi/${p.spotlightVideoId}/hqdefault.jpg`
+                : ''),
+          }
+        : null,
+    }), {} as Record<string, { id: string; title: string; thumbnail: string } | null>);
+
     return {
       id: inf.id,
       handle: mainAccount?.handle ?? null,
       name: inf.user?.name || mainAccount?.displayName || 'Unknown',
-      platforms: accounts.map((p) => p.platform),
+      platforms: sortedAccounts.map((p) => p.platform),
       followers: mainAccount?.followers ?? 0,
-      followersByPlatform: accounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.followers }), {}),
-      avgViewsByPlatform: accounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avgViews }), {}),
+      followersByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.followers }), {}),
+      avgViewsByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avgViews }), {}),
+      engagementByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.engagementRate }), {}),
+      handleByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.handle }), {}),
+      avatarByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avatarUrl ?? null }), {}),
+      syncedAtByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.syncedAt ?? null }), {}),
+      spotlightByPlatform,
       engagementRate: mainAccount?.engagementRate ?? 0,
       category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'Lifestyle'),
       performanceScore,
