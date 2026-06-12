@@ -6,11 +6,13 @@ import { SyncProcessor } from './sync.processor';
 import { TikTokAdapter } from './adapters/tiktok.adapter';
 import { InstagramAdapter } from './adapters/instagram.adapter';
 import { YouTubeAdapter } from './adapters/youtube.adapter';
+import { YouTubeConnectModule } from '../youtube-connect/youtube-connect.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: INFLUENCER_SYNC_QUEUE }),
     PrismaModule,
+    YouTubeConnectModule,
   ],
   providers: [
     TtlService,

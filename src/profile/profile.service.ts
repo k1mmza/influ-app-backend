@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -37,6 +38,17 @@ export class ProfileService {
     else if (user.role === 'AGENCY') profile = user.agencyProfile;
     else if (user.role === 'INFLUENCER') profile = user.influencerProfile;
 
+    // Expose platform accounts with a `hasTokens` flag (no raw tokens)
+    const platforms =
+      user.role === 'INFLUENCER' && user.influencerProfile?.platformAccounts
+        ? user.influencerProfile.platformAccounts.map((pa) => ({
+            id: pa.id,
+            platform: pa.platform,
+            handle: pa.handle,
+            hasTokens: !!(pa as any).refreshToken,
+          }))
+        : [];
+
     return {
       id: user.id,
       name: user.name,
@@ -45,6 +57,7 @@ export class ProfileService {
       plan: user.plan,
       profileCompleteness: user.profileCompleteness,
       profile,
+      platforms,
     };
   }
 
@@ -120,6 +133,35 @@ export class ProfileService {
     });
 
     return this.getProfile(userId);
+  }
+
+  // ─── UPLOAD RATE CARD FILE ────────────────────────────────────────────────────
+  async uploadRateCardFile(userId: string, fileUrl: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role !== 'INFLUENCER') throw new ForbiddenException('Only influencers can upload a rate card');
+
+    const profile = await this.prisma.influencerProfile.findUnique({ where: { userId } });
+    if (!profile) throw new BadRequestException('Influencer profile not found — complete your profile first');
+
+    await this.prisma.influencerProfile.update({
+      where: { userId },
+      data: { rateCardFileUrl: fileUrl },
+    });
+
+    return { rateCardFileUrl: fileUrl };
+  }
+
+  async deleteRateCardFile(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== 'INFLUENCER') throw new ForbiddenException();
+
+    await this.prisma.influencerProfile.updateMany({
+      where: { userId },
+      data: { rateCardFileUrl: null },
+    });
+
+    return { message: 'Rate card removed' };
   }
 
   // ─── DELETE PROFILE (soft delete) ────────────────────────────────────────────

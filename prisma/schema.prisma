@@ -103,6 +103,9 @@ model InfluencerProfile {
   lastSyncedAt      DateTime?
   nextRefreshAt     DateTime?
 
+  // Rate card file (PDF or image uploaded by the influencer)
+  rateCardFileUrl   String?
+
   // External profile (created from URL search, not self-registered)
   isExternal        Boolean   @default(false)
   externalHandle    String?
@@ -188,6 +191,19 @@ model PlatformAccount {
   spotlightVideoId       String?
   spotlightVideoTitle    String?
   spotlightThumbnailUrl  String?
+
+  // OAuth tokens (set when influencer connects their account)
+  channelId         String?
+  accessToken       String?   @db.Text
+  refreshToken      String?   @db.Text
+  tokenExpiry       DateTime?
+
+  // YouTube Analytics fields (populated via yt-analytics.readonly)
+  watchTimeMins     Float?
+  avgViewDuration   Float?
+  avgViewPct        Float?
+  subscribersGained Int?
+  topCountries      Json?
 
   // Relationships
   audienceInsights AudienceInsight[]

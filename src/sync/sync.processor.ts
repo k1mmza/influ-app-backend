@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { TtlService, INFLUENCER_SYNC_QUEUE } from './ttl.service';
@@ -7,6 +7,7 @@ import { TikTokAdapter } from './adapters/tiktok.adapter';
 import { InstagramAdapter } from './adapters/instagram.adapter';
 import { YouTubeAdapter } from './adapters/youtube.adapter';
 import { PlatformAdapter } from './adapters/platform.adapter';
+import { YouTubeConnectService } from '../youtube-connect/youtube-connect.service';
 
 export interface SyncJobData {
   influencerId: string;
@@ -25,6 +26,7 @@ export class SyncProcessor extends WorkerHost {
     tiktok: TikTokAdapter,
     instagram: InstagramAdapter,
     youtube: YouTubeAdapter,
+    @Optional() private ytConnect: YouTubeConnectService,
   ) {
     super();
     this.adapters = new Map<string, PlatformAdapter>([
@@ -44,6 +46,19 @@ export class SyncProcessor extends WorkerHost {
     });
 
     try {
+      // For YouTube: prefer OAuth path when refresh token is available
+      if (platform.toLowerCase() === 'youtube' && this.ytConnect) {
+        const linked = await this.prisma.platformAccount.findFirst({
+          where: { influencerId, platform: 'youtube', refreshToken: { not: null } },
+        });
+        if (linked) {
+          this.logger.log(`Using OAuth tokens for ${platform}/@${handle}`);
+          await this.ytConnect.syncLinkedAccount(linked.id);
+          this.logger.log(`OAuth sync done for ${platform}/@${handle}`);
+          return;
+        }
+      }
+
       const adapter = this.adapters.get(platform.toLowerCase());
       if (!adapter) {
         this.logger.warn(`No adapter for platform: ${platform}`);

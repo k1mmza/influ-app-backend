@@ -9,6 +9,9 @@ import { InfluencersModule } from './influencers/influencers.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { ProfileModule } from './profile/profile.module';
 import { SyncModule } from './sync/sync.module';
+import { SmartPlanModule } from './smart-plan/smart-plan.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { YouTubeConnectModule } from './youtube-connect/youtube-connect.module';
 
 @Module({
   imports: [
@@ -25,6 +28,9 @@ import { SyncModule } from './sync/sync.module';
     ConversationsModule,
     ProfileModule,
     SyncModule,
+    SmartPlanModule,
+    CampaignsModule,
+    YouTubeConnectModule,
   ],
   controllers: [AppController],
   providers: [AppService],
