@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 export interface ParsedFilters {
   platforms?: string[];
-  category?: string;
+  categories?: string[];
   followerRange?: string;
   minFollowers?: number;
   minAverageViews?: number;
@@ -24,6 +24,7 @@ export interface ParsedFilters {
 @Injectable()
 export class SmartSearchService {
   private readonly logger = new Logger(SmartSearchService.name);
+  private readonly MAX_CATEGORIES = 3;
 
   async parseQuery(query: string): Promise<ParsedFilters> {
     try {
@@ -43,7 +44,7 @@ Do not include any explanation, markdown, or extra text — just raw JSON.
 
 Available fields:
 - platforms: string[] (TikTok, Instagram, YouTube, Facebook, X, Lemon8, LinkedIn)
-- category: string — MUST be a single string, never an array. Pick the ONE most relevant from: Travel, Food, Beauty, Lifestyle, Fashion, Tech, Gaming, Fitness, Entertainment
+- categories: string[] — return an array of matched categories, max 3. Pick from: Travel, Food, Beauty, Lifestyle, Fashion, Tech, Gaming, Fitness, Entertainment. Always return as array even for one category e.g. ["Travel"]
 - followerRange: string (Nano, Micro, Mid, Macro, Mega) — only use when user explicitly mentions a tier name like "micro influencer" or "macro influencer". Do NOT use for "over X followers" or "at least X followers" queries
 - minFollowers: number — use for "over X", "at least X", "more than X followers" queries instead of followerRange
 - minAverageViews: number

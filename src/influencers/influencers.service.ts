@@ -29,11 +29,9 @@ export class InfluencersService {
   async findAll(query: any) {
     if (query.q) {
       const aiFilters = await this.smartSearch.parseQuery(query.q);
-      // Map AI category (singular) → categories param (plural) that findAll reads
-      if (aiFilters.category && !query.categories) {
-        (aiFilters as any).categories = Array.isArray(aiFilters.category)
-          ? (aiFilters.category as string[]).join(",")
-          : aiFilters.category;
+      // Map AI categories array → categories query param
+      if (aiFilters.categories?.length && !query.categories) {
+        query.categories = aiFilters.categories.join(',');
       }
       // Map AI platforms array → single platform string
       if ((aiFilters as any).platforms?.length && !query.platform) {
@@ -41,7 +39,6 @@ export class InfluencersService {
       }
       // Merge AI filters with explicit query params (explicit take priority)
       query = { ...aiFilters, ...query, q: undefined };
-      if (query.category && !query.categories) query.categories = query.category;
       if (!query.platform && query.platforms) {
         query.platform = Array.isArray(query.platforms)
           ? query.platforms.join(',')
