@@ -27,12 +27,11 @@ export class InfluencersService {
   ) {}
 
   async findAll(query: any) {
-    console.log('Received query:', query);
     if (query.q) {
       const aiFilters = await this.smartSearch.parseQuery(query.q);
-      // Map AI category (singular) → categories param (plural) that findAll reads
-      if (aiFilters.category && !query.categories) {
-        (aiFilters as any).categories = aiFilters.category;
+      // Map AI categories array → categories query param
+      if (aiFilters.categories?.length && !query.categories) {
+        query.categories = aiFilters.categories.join(',');
       }
       // Map AI platforms array → single platform string
       if ((aiFilters as any).platforms?.length && !query.platform) {
@@ -40,13 +39,11 @@ export class InfluencersService {
       }
       // Merge AI filters with explicit query params (explicit take priority)
       query = { ...aiFilters, ...query, q: undefined };
-      if (query.category && !query.categories) query.categories = query.category;
       if (!query.platform && query.platforms) {
         query.platform = Array.isArray(query.platforms)
           ? query.platforms.join(',')
           : query.platforms;
       }
-      console.log('Final merged query:', JSON.stringify(query));
     }
 
     const {
@@ -72,21 +69,17 @@ export class InfluencersService {
     const andConditions: any[] = [];
 
     // ── Categories ───────────────────────────────────────────────────────────
-    // Use string_contains instead of array_contains — more reliable for JSON
-    // fields in Postgres. Matches "Gaming" inside ["Gaming"] as substring.
     if (categoriesParam) {
       const categoryList = (categoriesParam as string)
         .split(',')
-        .map((c: string) => c.trim())
+        .map((c: string) => c.trim().toLowerCase())
         .filter(Boolean);
         
       if (categoryList.length === 1) {
-        // CHANGE THIS from string_contains to array_contains
         where.categories = { array_contains: categoryList[0] };
       } else if (categoryList.length > 1) {
         andConditions.push({
           OR: categoryList.map((cat: string) => ({
-            // CHANGE THIS from string_contains to array_contains
             categories: { array_contains: cat },
           })),
         });
@@ -165,7 +158,7 @@ export class InfluencersService {
           { bio: { contains: keyword, mode: 'insensitive' } },
           { user: { name: { contains: keyword, mode: 'insensitive' } } },
           // string_contains here too — consistent with category filter
-          { categories: { string_contains: keyword } },
+          { categories: { array_contains: keyword } },
         ],
       });
     }
@@ -209,7 +202,7 @@ export class InfluencersService {
 
     // ── Style / availability / country ───────────────────────────────────────
     if (stylePresent && stylePresent !== 'All') {
-      where.styleTags = { string_contains: stylePresent };
+      where.styleTags = { array_contains: stylePresent.toLowerCase() };
     }
 
     if (availabilityStatus && availabilityStatus !== 'All') {
@@ -219,8 +212,6 @@ export class InfluencersService {
     if (country) {
       where.country = { equals: country, mode: 'insensitive' };
     }
-
-    console.log('Final where clause:', JSON.stringify(where));
 
     const influencers = await this.prisma.influencerProfile.findMany({
       where,
@@ -423,7 +414,7 @@ export class InfluencersService {
       syncedAtByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.syncedAt ?? null }), {}),
       spotlightByPlatform,
       engagementRate: mainAccount?.engagementRate ?? 0,
-      category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'Lifestyle'),
+      category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'lifestyle'),
       performanceScore,
       ratePerPost: 0,
       stylePresent: Array.isArray(inf.styleTags) ? inf.styleTags : [],
@@ -665,8 +656,8 @@ export class InfluencersService {
           where: { id: profileId },
           data: {
             bio: aiData?.bio ?? profile.bio ?? null,
-            categories: (aiData?.category ? [aiData.category] : []) as any,
-            styleTags: (aiData?.tags ?? []) as any,
+            categories: (aiData?.category ? [aiData.category.toLowerCase()] : []) as any,
+            styleTags: (aiData?.tags?.map(t => t.toLowerCase()) ?? []) as any,
             growthRate: profile.growthRate ?? null,
             country,
             qualityScore,
@@ -727,8 +718,8 @@ export class InfluencersService {
         isExternal: true,
         externalHandle: handle,
         bio: aiData?.bio ?? profile.bio ?? null,
-        categories: aiData?.category ? [aiData.category] : [],
-        styleTags: aiData?.tags ?? [],
+        categories: aiData?.category ? [aiData.category.toLowerCase()] : [],
+        styleTags: aiData?.tags?.map(t => t.toLowerCase()) ?? [],
         growthRate: profile.growthRate ?? null,
         country,
         qualityScore,
