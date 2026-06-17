@@ -1,10 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChatGateway } from './chat.gateway';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class ConversationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private chatGateway: ChatGateway,
+  ) {}
 
   private async resolveClientBrandId(_userId: string, role: string, brandProfile: any, agencyProfile: any): Promise<string | null> {
     if (role === 'BRAND') {
@@ -115,6 +119,7 @@ export class ConversationsService {
       where: { id: conversationId },
       data: { updatedAt: new Date() },
     });
+    this.chatGateway.emitNewMessage(conversationId, msg);
     return msg;
   }
 
@@ -132,5 +137,34 @@ export class ConversationsService {
       where: { conversationId, isRead: false, senderId: { not: userId } },
       data: { isRead: true },
     });
+  }
+
+  async findOne(conversationId: string) {
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+    return {
+      id: conv.id,
+      workPhase: conv.workPhase ?? 'brief',
+      contractUrl: conv.contractUrl ?? null,
+      briefFileUrl: conv.briefFileUrl ?? null,
+      paymentProofUrl: conv.paymentProofUrl ?? null,
+    };
+  }
+
+  async saveAttachment(conversationId: string, type: string, fileUrl: string) {
+    const fieldMap: Record<string, string> = {
+      contract: 'contractUrl',
+      brief: 'briefFileUrl',
+      payment: 'paymentProofUrl',
+    };
+    const field = fieldMap[type];
+    if (!field) throw new BadRequestException('Invalid attachment type');
+    const updated = await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { [field]: fileUrl, updatedAt: new Date() },
+    });
+    return { url: fileUrl, type, conversationId: updated.id };
   }
 }

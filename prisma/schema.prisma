@@ -394,12 +394,15 @@ model Conversation {
   clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
   influencerId  String
   influencer    InfluencerProfile @relation(fields: [influencerId], references: [id])
-  workPhase     String?           // NEGOTIATION, EXECUTION, etc.
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  workPhase       String?
+  contractUrl     String?
+  briefFileUrl    String?
+  paymentProofUrl String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 
   // Relationships
-  messages      Message[]
+  messages        Message[]
 }
 
 model Message {
