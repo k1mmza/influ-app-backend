@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { YouTubeStrategy } from './strategies/youtube.strategy';
 import { TikTokStrategy } from './strategies/tiktok.strategy';
+import { InstagramStrategy } from './strategies/instagram.strategy';
 import type { IPlatformStrategy, PlatformChannelData, PlatformAnalyticsData, PlatformTokens } from './strategies/platform-strategy.interface';
 
 @Injectable()
@@ -23,10 +24,12 @@ export class PlatformConnectService {
     private readonly jwtService: JwtService,
     private readonly youtube: YouTubeStrategy,
     private readonly tiktok: TikTokStrategy,
+    private readonly instagram: InstagramStrategy,
   ) {
     this.strategies = new Map<string, IPlatformStrategy>([
       ['youtube', youtube],
       ['tiktok', tiktok],
+      ['instagram', instagram],
     ]);
   }
 
@@ -78,7 +81,8 @@ export class PlatformConnectService {
     if (!user.influencerProfile) throw new BadRequestException('Complete your profile before linking a platform');
 
     const strat = this.strategy(platform);
-    const tokens = await strat.exchangeCode(code, this.callbackUrl);
+    // Pass state to exchangeCode so PKCE strategies (e.g. TikTok) can retrieve the code_verifier
+    const tokens = await strat.exchangeCode(code, this.callbackUrl, stateToken);
 
     const accessToken = tokens.accessToken;
     const [channelData, analyticsData] = await Promise.all([

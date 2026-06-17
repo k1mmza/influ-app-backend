@@ -217,7 +217,7 @@ export class InfluencersService {
       where,
       include: {
         user: { select: { name: true, email: true } },
-        platformAccounts: true,
+        platformAccounts: { include: { audienceInsights: true } },
       },
     });
 
@@ -400,6 +400,49 @@ export class InfluencersService {
         : null,
     }), {} as Record<string, { id: string; title: string; thumbnail: string } | null>);
 
+    // ── New analytics per-platform maps ──────────────────────────────────────
+    const watchTimeMinsByPlatform = sortedAccounts.reduce((acc, p) => ({
+      ...acc,
+      [p.platform]: p.watchTimeMins ?? null,
+    }), {} as Record<string, number | null>);
+
+    const avgViewDurationByPlatform = sortedAccounts.reduce((acc, p) => ({
+      ...acc,
+      [p.platform]: p.avgViewDuration ?? null,
+    }), {} as Record<string, number | null>);
+
+    const avgViewPctByPlatform = sortedAccounts.reduce((acc, p) => ({
+      ...acc,
+      [p.platform]: p.avgViewPct ?? null,
+    }), {} as Record<string, number | null>);
+
+    const subscribersGainedByPlatform = sortedAccounts.reduce((acc, p) => ({
+      ...acc,
+      [p.platform]: p.subscribersGained ?? null,
+    }), {} as Record<string, number | null>);
+
+    const topCountriesByPlatform = sortedAccounts.reduce((acc, p) => ({
+      ...acc,
+      [p.platform]: p.topCountries ?? null,
+    }), {} as Record<string, any>);
+
+    const audienceInsightsByPlatform = sortedAccounts.reduce((acc, p) => {
+      const insight = p.audienceInsights?.[0] ?? null;
+      return {
+        ...acc,
+        [p.platform]: insight
+          ? {
+              malePct: insight.malePct ?? null,
+              femalePct: insight.femalePct ?? null,
+              ageDistribution: insight.ageDistribution ?? null,
+            }
+          : null,
+      };
+    }, {} as Record<string, { malePct: number | null; femalePct: number | null; ageDistribution: any } | null>);
+
+    // Main account audience insight (first insight of the highest-follower account)
+    const mainInsight = mainAccount?.audienceInsights?.[0] ?? null;
+
     return {
       id: inf.id,
       handle: mainAccount?.handle ?? null,
@@ -413,6 +456,13 @@ export class InfluencersService {
       avatarByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avatarUrl ?? null }), {}),
       syncedAtByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.syncedAt ?? null }), {}),
       spotlightByPlatform,
+      // Analytics maps
+      watchTimeMinsByPlatform,
+      avgViewDurationByPlatform,
+      avgViewPctByPlatform,
+      subscribersGainedByPlatform,
+      topCountriesByPlatform,
+      audienceInsightsByPlatform,
       engagementRate: mainAccount?.engagementRate ?? 0,
       category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'lifestyle'),
       performanceScore,
@@ -433,6 +483,19 @@ export class InfluencersService {
         audienceQualityScore: inf.audienceQualityScore ?? null,
         responseRate: inf.responseRate ?? 0,
         bio: inf.bio ?? null,
+        // Main account analytics fields
+        watchTimeMins: mainAccount?.watchTimeMins ?? null,
+        avgViewDuration: mainAccount?.avgViewDuration ?? null,
+        avgViewPct: mainAccount?.avgViewPct ?? null,
+        subscribersGained: mainAccount?.subscribersGained ?? null,
+        topCountries: mainAccount?.topCountries ?? null,
+        audienceInsights: mainInsight
+          ? {
+              malePct: mainInsight.malePct ?? null,
+              femalePct: mainInsight.femalePct ?? null,
+              ageDistribution: mainInsight.ageDistribution ?? null,
+            }
+          : null,
       },
     };
   }
@@ -440,7 +503,11 @@ export class InfluencersService {
   async findOne(id: string) {
     const influencer = await this.prisma.influencerProfile.findUnique({
       where: { id },
-      include: { user: true, platformAccounts: true, rateCards: true },
+      include: {
+        user: true,
+        platformAccounts: { include: { audienceInsights: true } },
+        rateCards: true,
+      },
     });
     return influencer ? this.formatInfluencer(influencer) : null;
   }
@@ -464,7 +531,7 @@ export class InfluencersService {
             influencer: {
               include: {
                 user: { select: { name: true } },
-                platformAccounts: true,
+                platformAccounts: { include: { audienceInsights: true } },
               },
             },
           },
@@ -549,7 +616,7 @@ export class InfluencersService {
         influencer: {
           include: {
             user: { select: { name: true, email: true } },
-            platformAccounts: true,
+            platformAccounts: { include: { audienceInsights: true } },
           },
         },
       },
@@ -604,7 +671,10 @@ export class InfluencersService {
             create: { platform: p, handle: cleanHandle, displayName: cleanHandle },
           },
         },
-        include: { platformAccounts: true, user: { select: { name: true, email: true } } },
+        include: {
+          platformAccounts: { include: { audienceInsights: true } },
+          user: { select: { name: true, email: true } },
+        },
       });
       this.fetchAndUpdateProfile(stub.id, p, cleanHandle).catch(() => {});
       return { found: true, source: 'api' as const, loading: true, influencer: this.formatInfluencer(stub) };
@@ -745,7 +815,7 @@ export class InfluencersService {
         },
       },
       include: {
-        platformAccounts: true,
+        platformAccounts: { include: { audienceInsights: true } },
         user: { select: { name: true, email: true } },
       },
     });

@@ -33,7 +33,8 @@ export interface PlatformAnalyticsData {
 export interface IPlatformStrategy {
   readonly platform: string;
   getAuthUrl(state: string, callbackUrl: string): string;
-  exchangeCode(code: string, callbackUrl: string): Promise<PlatformTokens>;
+  /** state is optional — only PKCE-based strategies (e.g. TikTok) need it to retrieve the code_verifier */
+  exchangeCode(code: string, callbackUrl: string, state?: string): Promise<PlatformTokens>;
   refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; expiry: Date }>;
   fetchChannelData(accessToken: string, platformUserId?: string): Promise<PlatformChannelData | null>;
   fetchAnalyticsData?(accessToken: string, platformUserId?: string): Promise<PlatformAnalyticsData | null>;

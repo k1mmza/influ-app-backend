@@ -4,6 +4,7 @@ import { PlatformConnectController } from './platform-connect.controller';
 import { PlatformConnectService } from './platform-connect.service';
 import { YouTubeStrategy } from './strategies/youtube.strategy';
 import { TikTokStrategy } from './strategies/tiktok.strategy';
+import { InstagramStrategy } from './strategies/instagram.strategy';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { TikTokStrategy } from './strategies/tiktok.strategy';
     }),
   ],
   controllers: [PlatformConnectController],
-  providers: [PlatformConnectService, YouTubeStrategy, TikTokStrategy],
+  providers: [PlatformConnectService, YouTubeStrategy, TikTokStrategy, InstagramStrategy],
   exports: [PlatformConnectService],
 })
 export class PlatformConnectModule {}
