@@ -61,6 +61,7 @@ export class ProfileService {
       role: user.role,
       plan: user.plan,
       profileCompleteness: user.profileCompleteness,
+      avatarUrl: user.avatarUrl ?? null,
       profile,
       platforms,
     };
@@ -138,6 +139,15 @@ export class ProfileService {
     });
 
     return this.getProfile(userId);
+  }
+
+  // ─── UPLOAD AVATAR ────────────────────────────────────────────────────────────
+  async uploadAvatarFile(userId: string, fileUrl: string) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: fileUrl },
+    });
+    return { avatarUrl: fileUrl };
   }
 
   // ─── UPLOAD RATE CARD FILE ────────────────────────────────────────────────────

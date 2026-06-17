@@ -21,6 +21,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 const UPLOAD_DIR = './uploads/rate-cards';
+const AVATAR_DIR = './uploads/avatars';
 
 @UseGuards(JwtAuthGuard)
 @Controller('profile')
@@ -40,6 +41,31 @@ export class ProfileController {
   @Patch()
   updateProfile(@Request() req: any, @Body() dto: UpdateProfileDto) {
     return this.profileService.updateProfile(req.user.userId, dto);
+  }
+
+  @Post('avatar')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          if (!existsSync(AVATAR_DIR)) mkdirSync(AVATAR_DIR, { recursive: true });
+          cb(null, AVATAR_DIR);
+        },
+        filename: (req, file, cb) => {
+          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+          cb(null, `${unique}${extname(file.originalname)}`);
+        },
+      }),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        cb(null, allowed.includes(file.mimetype));
+      },
+    }),
+  )
+  uploadAvatar(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+    const fileUrl = `/uploads/avatars/${file.filename}`;
+    return this.profileService.uploadAvatarFile(req.user.userId, fileUrl);
   }
 
   @Post('rate-card')

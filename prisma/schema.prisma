@@ -29,6 +29,7 @@ model User {
   plan                 String?
   profileCompleteness  Int       @default(0)
   isRoleSelected       Boolean   @default(false)
+  avatarUrl            String?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   isDeleted            Boolean   @default(false)
