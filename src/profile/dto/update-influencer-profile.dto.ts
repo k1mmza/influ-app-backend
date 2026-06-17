@@ -38,6 +38,8 @@ export class UpdateInfluencerProfileDto {
 
   @IsOptional() @IsString() availabilityStatus?: string;
 
+  @IsOptional() @IsString() country?: string;
+
   @IsOptional()
   @IsNumber()
   @Min(0)

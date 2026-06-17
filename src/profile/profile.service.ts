@@ -38,13 +38,18 @@ export class ProfileService {
     else if (user.role === 'AGENCY') profile = user.agencyProfile;
     else if (user.role === 'INFLUENCER') profile = user.influencerProfile;
 
-    // Expose platform accounts with a `hasTokens` flag (no raw tokens)
+    // Expose platform accounts with stats — no raw tokens
     const platforms =
       user.role === 'INFLUENCER' && user.influencerProfile?.platformAccounts
         ? user.influencerProfile.platformAccounts.map((pa) => ({
             id: pa.id,
             platform: pa.platform,
             handle: pa.handle,
+            displayName: pa.displayName,
+            followers: pa.followers,
+            avgViews: pa.avgViews,
+            engagementRate: pa.engagementRate,
+            syncedAt: pa.syncedAt,
             hasTokens: !!(pa as any).refreshToken,
           }))
         : [];
