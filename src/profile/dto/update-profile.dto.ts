@@ -7,6 +7,9 @@ export class UpdateProfileDto {
   // Shared — updates users table
   @IsOptional() @IsString() name?: string;
 
+  // Pass "" to clear the avatar
+  @IsOptional() @IsString() avatarUrl?: string;
+
   // Brand / Agency fields
   @IsOptional()
   @ValidateNested()

@@ -76,12 +76,12 @@ export class ProfileService {
     if (!user) throw new NotFoundException('User not found');
 
     await this.prisma.$transaction(async (tx) => {
-      // 1. Update name on users table if provided
-      if (dto.name !== undefined) {
-        await tx.user.update({
-          where: { id: userId },
-          data: { name: dto.name },
-        });
+      // 1. Update shared user fields (name, avatarUrl)
+      const userUpdates: Record<string, any> = {};
+      if (dto.name !== undefined) userUpdates.name = dto.name;
+      if (dto.avatarUrl !== undefined) userUpdates.avatarUrl = dto.avatarUrl || null;
+      if (Object.keys(userUpdates).length > 0) {
+        await tx.user.update({ where: { id: userId }, data: userUpdates });
       }
 
       // 2. Update role-specific profile
