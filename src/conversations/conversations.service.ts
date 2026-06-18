@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
 import { v4 as uuidv4 } from 'uuid';
@@ -61,7 +61,9 @@ export class ConversationsService {
         lastMessage: conv.messages[0]?.content ?? '',
         lastMessageAt: conv.messages[0]?.sentAt ?? conv.createdAt,
         unreadCount,
-        workPhase: conv.workPhase ?? 'brief',
+        workPhase: conv.workPhase ?? 'contact',
+        brandPhaseReady: conv.brandPhaseReady,
+        influencerPhaseReady: conv.influencerPhaseReady,
       };
     });
   }
@@ -91,7 +93,7 @@ export class ConversationsService {
         influencerId,
         clientBrandId,
         campaignId,
-        workPhase: 'brief',
+        workPhase: 'contact',
         updatedAt: new Date(),
       },
     });
@@ -146,11 +148,50 @@ export class ConversationsService {
     if (!conv) throw new NotFoundException('Conversation not found');
     return {
       id: conv.id,
-      workPhase: conv.workPhase ?? 'brief',
+      workPhase: conv.workPhase ?? 'contact',
+      brandPhaseReady: conv.brandPhaseReady,
+      influencerPhaseReady: conv.influencerPhaseReady,
       contractUrl: conv.contractUrl ?? null,
       briefFileUrl: conv.briefFileUrl ?? null,
       paymentProofUrl: conv.paymentProofUrl ?? null,
     };
+  }
+
+  async markPhaseReady(conversationId: string, userId: string) {
+    const [user, conv] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, include: { influencerProfile: true } }),
+      this.prisma.conversation.findUnique({ where: { id: conversationId } }),
+    ]);
+    if (!user) throw new NotFoundException('User not found');
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const isInfluencer = user.role === 'INFLUENCER' && user.influencerProfile?.id === conv.influencerId;
+    const isBrand = user.role === 'BRAND' || user.role === 'AGENCY';
+    if (!isInfluencer && !isBrand) throw new ForbiddenException('Not a participant in this conversation');
+
+    const updateData: any = isInfluencer ? { influencerPhaseReady: true } : { brandPhaseReady: true };
+    let updated = await this.prisma.conversation.update({ where: { id: conversationId }, data: updateData });
+
+    // Both sides confirmed — advance to next phase and reset flags
+    if (updated.brandPhaseReady && updated.influencerPhaseReady) {
+      const phases = ['contact', 'brief', 'draft', 'work', 'payment'];
+      const currentIdx = phases.indexOf(updated.workPhase ?? 'contact');
+      const nextPhase = phases[Math.min(currentIdx + 1, phases.length - 1)];
+      if (nextPhase !== updated.workPhase) {
+        updated = await this.prisma.conversation.update({
+          where: { id: conversationId },
+          data: { workPhase: nextPhase, brandPhaseReady: false, influencerPhaseReady: false, updatedAt: new Date() },
+        });
+      }
+    }
+
+    this.chatGateway.emitPhaseUpdate(conversationId, {
+      workPhase: updated.workPhase,
+      brandPhaseReady: updated.brandPhaseReady,
+      influencerPhaseReady: updated.influencerPhaseReady,
+    });
+
+    return { workPhase: updated.workPhase, brandPhaseReady: updated.brandPhaseReady, influencerPhaseReady: updated.influencerPhaseReady };
   }
 
   async saveAttachment(conversationId: string, type: string, fileUrl: string) {

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Delete, Request, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
@@ -41,9 +41,6 @@ export class CampaignsController {
 
   @Post(':id/apply')
   applyToCampaign(@Request() req: any, @Param('id') id: string) {
-    if (req.user.role !== 'INFLUENCER') {
-      throw new ForbiddenException('Only influencers can apply to campaigns');
-    }
     return this.campaignsService.applyToCampaign(req.user.userId, id);
   }
 

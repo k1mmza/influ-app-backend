@@ -33,4 +33,10 @@ export class ChatGateway {
       .to(`conversation:${conversationId}`)
       .emit('new-message', message);
   }
+
+  emitPhaseUpdate(conversationId: string, payload: { workPhase: string | null; brandPhaseReady: boolean; influencerPhaseReady: boolean }) {
+    this.server
+      .to(`conversation:${conversationId}`)
+      .emit('phase-update', payload);
+  }
 }

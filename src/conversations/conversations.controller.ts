@@ -52,6 +52,11 @@ export class ConversationsController {
     return this.conversationsService.markAsRead(id, req.user.userId);
   }
 
+  @Post(':id/phase-ready')
+  markPhaseReady(@Request() req, @Param('id') id: string) {
+    return this.conversationsService.markPhaseReady(id, req.user.userId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.conversationsService.findOne(id);

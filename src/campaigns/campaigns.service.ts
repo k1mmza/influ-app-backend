@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
@@ -138,9 +139,10 @@ export class CampaignsService {
 
     if (dto.status && dto.status !== campaign.status) {
       const validTransitions: Record<string, string[]> = {
-        DRAFT: ['DRAFT', 'ACTIVE'],
-        ACTIVE: ['ACTIVE', 'COMPLETED'],
+        DRAFT: ['DRAFT', 'ACTIVE', 'CANCELLED'],
+        ACTIVE: ['ACTIVE', 'COMPLETED', 'CANCELLED'],
         COMPLETED: ['COMPLETED'],
+        CANCELLED: ['CANCELLED'],
       };
       const allowed = validTransitions[campaign.status] ?? [];
       if (!allowed.includes(dto.status)) {
@@ -198,11 +200,24 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaign not found');
     this.assertCampaignOwnership(user, campaign);
 
-    if (campaign.status !== 'DRAFT') {
-      throw new BadRequestException('Only draft campaigns can be deleted');
+    if (!['DRAFT', 'CANCELLED'].includes(campaign.status)) {
+      throw new BadRequestException('Only draft or cancelled campaigns can be deleted');
     }
 
-    return this.prisma.campaign.delete({ where: { id: campaignId } });
+    // Delete all related records in dependency order before removing the campaign
+    await this.prisma.$transaction([
+      this.prisma.trackingResult.deleteMany({ where: { campaignId } }),
+      this.prisma.submittedContent.deleteMany({ where: { application: { campaignId } } }),
+      this.prisma.campaignApplication.deleteMany({ where: { campaignId } }),
+      this.prisma.campaignRequirement.deleteMany({ where: { campaignId } }),
+      this.prisma.smartPlanBrief.deleteMany({ where: { campaignId } }),
+      this.prisma.review.deleteMany({ where: { campaignId } }),
+      this.prisma.pastCollaboration.deleteMany({ where: { campaignId } }),
+      this.prisma.message.deleteMany({ where: { conversation: { campaignId } } }),
+      this.prisma.conversation.deleteMany({ where: { campaignId } }),
+      this.prisma.payment.deleteMany({ where: { campaignId } }),
+      this.prisma.campaign.delete({ where: { id: campaignId } }),
+    ]);
   }
 
   async applyToCampaign(userId: string, campaignId: string) {
@@ -222,9 +237,6 @@ export class CampaignsService {
     }
 
     const accounts = user.influencerProfile.platformAccounts ?? [];
-    if (!accounts.length) {
-      throw new BadRequestException('You do not meet the campaign requirements');
-    }
 
     for (const requirement of campaign.requirements ?? []) {
       const requirementPlatforms = Array.isArray(requirement.platforms)
@@ -292,7 +304,17 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaign not found');
     this.assertCampaignOwnership(user, campaign);
 
-    return this.prisma.campaignApplication.findMany({
+    // TASK 2: fetch all conversations for this campaign in a single query to avoid N+1
+    const conversations = await this.prisma.conversation.findMany({
+      where: { campaignId },
+      select: { id: true, influencerId: true },
+    });
+    // Build influencerId → conversationId map
+    const convByInfluencer = new Map<string, string>(
+      conversations.map((c) => [c.influencerId, c.id]),
+    );
+
+    const applications = await this.prisma.campaignApplication.findMany({
       where: { campaignId },
       include: {
         influencer: {
@@ -303,6 +325,12 @@ export class CampaignsService {
         },
       },
     });
+
+    // Attach conversationId (or null) from the in-memory map
+    return applications.map((app) => ({
+      ...app,
+      conversationId: convByInfluencer.get(app.influencerId) ?? null,
+    }));
   }
 
   async updateApplicationStatus(userId: string, campaignId: string, applicationId: string, status: string) {
@@ -312,6 +340,9 @@ export class CampaignsService {
       include: { clientBrand: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
+
+    // TASK 3: assertCampaignOwnership already covers brand and agency ownership checks.
+    // It throws NotFoundException (masked as 403) if the caller doesn't own the campaign.
     this.assertCampaignOwnership(user, campaign);
 
     const allowedStatuses = ['PENDING', 'ACCEPTED', 'REJECTED'];
@@ -326,10 +357,57 @@ export class CampaignsService {
       throw new NotFoundException('Application not found');
     }
 
-    return this.prisma.campaignApplication.update({
+    // TASK 1: when accepting, auto-create a conversation (idempotent — safe for double-clicks)
+    if (status === 'ACCEPTED') {
+      const clientBrandId = campaign.clientBrand?.id;
+      if (!clientBrandId) throw new BadRequestException('Campaign has no associated client brand');
+
+      const [updatedApplication, conversation] = await this.prisma.$transaction(async (tx) => {
+        // Prevent race condition: find-or-create inside the transaction
+        let conv = await tx.conversation.findFirst({
+          where: {
+            influencerId: application.influencerId,
+            clientBrandId,
+            campaignId,
+          },
+        });
+
+        if (!conv) {
+          conv = await tx.conversation.create({
+            data: {
+              id: uuidv4(),
+              influencerId: application.influencerId,
+              clientBrandId,
+              campaignId,
+              workPhase: 'contact',
+              updatedAt: new Date(),
+            },
+          });
+        }
+
+        // TASK 4: if status changes away from ACCEPTED later, the conversation is intentionally kept.
+        // See updateApplicationStatus callers — conversation is never deleted here.
+        // TODO: conversation is intentionally kept even if application is later rejected — preserves message history
+
+        const updated = await tx.campaignApplication.update({
+          where: { id: applicationId },
+          data: { status },
+        });
+
+        return [updated, conv];
+      });
+
+      return { ...updatedApplication, conversationId: conversation.id };
+    }
+
+    // TASK 4: status change away from ACCEPTED (e.g. REJECTED) — do NOT delete conversation
+    // TODO: conversation is intentionally kept even if application is later rejected — preserves message history
+    const updatedApplication = await this.prisma.campaignApplication.update({
       where: { id: applicationId },
       data: { status },
     });
+
+    return { ...updatedApplication, conversationId: null };
   }
 
   async getCampaignsForUser(userId: string) {

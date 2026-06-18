@@ -395,7 +395,9 @@ model Conversation {
   clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
   influencerId  String
   influencer    InfluencerProfile @relation(fields: [influencerId], references: [id])
-  workPhase       String?
+  workPhase            String?
+  brandPhaseReady      Boolean  @default(false)
+  influencerPhaseReady Boolean  @default(false)
   contractUrl     String?
   briefFileUrl    String?
   paymentProofUrl String?

@@ -52,7 +52,7 @@ export class UpdateCampaignDto {
   paymentDate?: string;
 
   @IsOptional()
-  @IsIn(['DRAFT', 'ACTIVE', 'COMPLETED'])
+  @IsIn(['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED'])
   status?: string;
 
   @IsOptional()
