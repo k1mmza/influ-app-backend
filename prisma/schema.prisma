@@ -130,8 +130,8 @@ model InfluencerProfile {
 
 model ClientBrand {
   id             String         @id @default(uuid())
-  agencyId       String
-  agency         AgencyProfile  @relation(fields: [agencyId], references: [id])
+  agencyId       String?
+  agency         AgencyProfile? @relation(fields: [agencyId], references: [id])
   brandProfileId String?        @unique
   brandProfile   BrandProfile?  @relation(fields: [brandProfileId], references: [id])
   brandName      String

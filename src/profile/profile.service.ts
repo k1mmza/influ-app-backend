@@ -86,7 +86,7 @@ export class ProfileService {
 
       // 2. Update role-specific profile
       if (user.role === 'BRAND' && dto.profile) {
-        await tx.agencyProfile.upsert({
+        await tx.brandProfile.upsert({
           where: { userId },
           create: { userId, ...dto.profile, socialLinks: dto.profile.socialLinks as any },
           update: { ...dto.profile, socialLinks: dto.profile.socialLinks as any },

@@ -1,0 +1,1 @@
+ALTER TABLE "ClientBrand" ALTER COLUMN "agencyId" DROP NOT NULL;
