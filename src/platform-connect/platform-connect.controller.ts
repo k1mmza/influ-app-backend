@@ -46,25 +46,30 @@ export class PlatformConnectController {
       // leave as default
     }
 
+    const redirect = (url: string) => {
+      res.setHeader('Content-Type', 'text/html');
+      res.send(`<html><body><script>window.location.replace(${JSON.stringify(url)})</script></body></html>`);
+    };
+
     if (error) {
-      return res.redirect(
+      return redirect(
         `${frontendUrl}/profile?platform_connect=error&platform=${platform}&reason=${encodeURIComponent(error)}`,
       );
     }
     if (!code || !state) {
-      return res.redirect(
+      return redirect(
         `${frontendUrl}/profile?platform_connect=error&platform=${platform}&reason=missing_params`,
       );
     }
 
     try {
       await this.service.handleCallback(code, state);
-      return res.redirect(
+      return redirect(
         `${frontendUrl}/profile?platform_connect=success&platform=${platform}`,
       );
     } catch (err: any) {
       const reason = encodeURIComponent(err.message ?? 'unknown');
-      return res.redirect(
+      return redirect(
         `${frontendUrl}/profile?platform_connect=error&platform=${platform}&reason=${reason}`,
       );
     }

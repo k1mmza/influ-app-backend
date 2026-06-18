@@ -12,8 +12,8 @@ export class TikTokStrategy implements IPlatformStrategy {
   readonly platform = 'tiktok';
   private readonly logger = new Logger(TikTokStrategy.name);
   private readonly AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize';
-  private readonly TOKEN_URL = 'https://open.tiktok.com/v2/oauth/token/';
-  private readonly REFRESH_URL = 'https://open.tiktok.com/v2/oauth/token/refresh/';
+  private readonly TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
+  private readonly REFRESH_URL = 'https://open.tiktokapis.com/v2/oauth/token/refresh/';
   private readonly USER_URL = 'https://open.tiktokapis.com/v2/user/info/';
   private readonly VIDEO_URL = 'https://open.tiktokapis.com/v2/video/list/';
 

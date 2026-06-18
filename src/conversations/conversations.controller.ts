@@ -9,7 +9,8 @@ import { existsSync, mkdirSync } from 'fs';
 import { ConversationsService } from './conversations.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
-const UPLOAD_DIR = './uploads/conversations';
+const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
+const UPLOAD_DIR = `${BASE}/conversations`;
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 @Controller('conversations')

@@ -20,8 +20,9 @@ import { ProfileService } from './profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
-const UPLOAD_DIR = './uploads/rate-cards';
-const AVATAR_DIR = './uploads/avatars';
+const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
+const UPLOAD_DIR = `${BASE}/rate-cards`;
+const AVATAR_DIR = `${BASE}/avatars`;
 
 @UseGuards(JwtAuthGuard)
 @Controller('profile')
