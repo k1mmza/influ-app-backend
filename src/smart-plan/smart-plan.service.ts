@@ -2,10 +2,13 @@ import {
   Injectable,
   Logger,
   InternalServerErrorException,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
+import { PrismaService } from '../prisma/prisma.service';
 import { GenerateBriefDto } from './dto/generate-brief.dto';
+import { SaveBriefDto } from './dto/save-brief.dto';
 
 export interface GeneratedBrief {
   strategy: string;
@@ -18,7 +21,7 @@ export class SmartPlanService {
   private readonly logger = new Logger(SmartPlanService.name);
   private readonly client: Anthropic | null;
 
-  constructor() {
+  constructor(private readonly prisma: PrismaService) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
       this.client = new Anthropic({ apiKey });
@@ -70,6 +73,38 @@ Return ONLY a valid JSON object with exactly three string fields — no markdown
       this.logger.error(`Smart Plan generation failed: ${err.message}`);
       throw new InternalServerErrorException('Failed to generate campaign brief');
     }
+  }
+
+  /** Upsert: replace the user's latest brief (one active brief per user). */
+  async saveBrief(userId: string, dto: SaveBriefDto): Promise<{ id: string }> {
+    // TODO: if multi-brief support is added later, remove the deleteMany and keep history
+    await this.prisma.smartPlanBrief.deleteMany({ where: { createdBy: userId } });
+
+    const brief = await this.prisma.smartPlanBrief.create({
+      data: {
+        createdBy: userId,
+        campaignId: dto.campaignId ?? null,
+        strategy: dto.strategy ?? '',
+        concept: dto.concept ?? '',
+        briefBody: dto.briefBody ?? '',
+        inputMode: 'AI',
+      },
+    });
+    return { id: brief.id };
+  }
+
+  /** Returns the user's most recent saved brief, or null if none exists. */
+  async getLatestBrief(userId: string): Promise<GeneratedBrief | null> {
+    const brief = await this.prisma.smartPlanBrief.findFirst({
+      where: { createdBy: userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!brief) return null;
+    return {
+      strategy: brief.strategy ?? '',
+      concept: brief.concept ?? '',
+      briefBody: brief.briefBody ?? '',
+    };
   }
 
   private buildStructuredContext(dto: GenerateBriefDto): string {

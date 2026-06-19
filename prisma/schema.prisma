@@ -350,14 +350,18 @@ model CampaignApplication {
 }
 
 model SmartPlanBrief {
-  id              String   @id @default(uuid())
-  campaignId      String
-  campaign        Campaign @relation(fields: [campaignId], references: [id])
-  createdBy       String   // User ID
+  id              String    @id @default(uuid())
+  campaignId      String?                                    // optional — brief may exist before a campaign is chosen
+  campaign        Campaign? @relation(fields: [campaignId], references: [id])
+  createdBy       String                                     // User ID (foreign key kept as bare String to avoid migration churn)
   requirementJson Json?
-  generatedBrief  String?  @db.Text
-  inputMode       String?  // AI, MANUAL
-  createdAt       DateTime @default(now())
+  strategy        String?   @db.Text                        // generated strategy section
+  concept         String?   @db.Text                        // generated concept section
+  briefBody       String?   @db.Text                        // generated creator brief section
+  generatedBrief  String?   @db.Text                        // legacy — kept for backward compat
+  inputMode       String?                                    // AI | MANUAL
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 model TrackingResult {
