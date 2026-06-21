@@ -341,12 +341,23 @@ model CampaignApplication {
   campaign     Campaign          @relation(fields: [campaignId], references: [id])
   influencerId String
   influencer   InfluencerProfile @relation(fields: [influencerId], references: [id])
+  // status values (bare String — no enum migration):
+  //   PENDING   influencer applied, awaiting brand        (influencer-initiated)
+  //   INVITED   brand invited, awaiting influencer        (brand-initiated)
+  //   ACCEPTED  linked + conversation exists              (terminal accept)
+  //   REJECTED  brand rejected an application
+  //   DECLINED  influencer declined an invite
   status       String            @default("PENDING")
+  // who initiated the row — APPLICATION (influencer applied) | INVITATION (brand invited)
+  origin       String            @default("APPLICATION")
   appliedAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 
   // Relationships
   submittedContents SubmittedContent[]
+
+  // One row per (campaign, influencer) — makes invite/apply find-or-create race-safe.
+  @@unique([campaignId, influencerId])
 }
 
 model SmartPlanBrief {
@@ -388,6 +399,8 @@ model Shortlist {
   influencerId  String
   influencer    InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   addedAt       DateTime          @default(now())
+
+  @@unique([clientBrandId, influencerId])
 }
 
 // COMMUNICATION

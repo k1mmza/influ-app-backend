@@ -31,7 +31,10 @@ export class YouTubeStrategy implements IPlatformStrategy {
     return `${this.AUTH_URL}?${params}`;
   }
 
-  async exchangeCode(code: string, callbackUrl: string): Promise<PlatformTokens> {
+  async exchangeCode(
+    code: string,
+    callbackUrl: string,
+  ): Promise<PlatformTokens> {
     const res = await fetch(this.TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -57,7 +60,9 @@ export class YouTubeStrategy implements IPlatformStrategy {
     };
   }
 
-  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; expiry: Date }> {
+  async refreshAccessToken(
+    refreshToken: string,
+  ): Promise<{ accessToken: string; expiry: Date }> {
     const res = await fetch(this.TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -77,7 +82,9 @@ export class YouTubeStrategy implements IPlatformStrategy {
     };
   }
 
-  async fetchChannelData(accessToken: string): Promise<PlatformChannelData | null> {
+  async fetchChannelData(
+    accessToken: string,
+  ): Promise<PlatformChannelData | null> {
     const res = await fetch(
       `${this.YT_BASE}/channels?part=snippet,statistics,contentDetails&mine=true`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -99,7 +106,8 @@ export class YouTubeStrategy implements IPlatformStrategy {
     const handle = ch.snippet?.customUrl?.replace(/^@/, '') ?? ch.id;
     const countryCode = ch.snippet?.country;
     const country = countryCode
-      ? new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ?? null
+      ? (new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ??
+        null)
       : null;
 
     let avgViews = videoCount > 0 ? Math.round(totalViews / videoCount) : 0;
@@ -132,7 +140,11 @@ export class YouTubeStrategy implements IPlatformStrategy {
   }
 
   private async fetchRecentVideoStats(uploadsId: string, accessToken: string) {
-    const empty = { avgViews: 0, engagementRate: 0, spotlightVideo: null as PlatformChannelData['spotlightVideo'] };
+    const empty = {
+      avgViews: 0,
+      engagementRate: 0,
+      spotlightVideo: null as PlatformChannelData['spotlightVideo'],
+    };
 
     const playlistRes = await fetch(
       `${this.YT_BASE}/playlistItems?part=contentDetails&playlistId=${uploadsId}&maxResults=50`,
@@ -160,21 +172,28 @@ export class YouTubeStrategy implements IPlatformStrategy {
       (acc: any, v: any) => ({
         views: acc.views + parseInt(v.statistics?.viewCount ?? '0', 10),
         likes: acc.likes + parseInt(v.statistics?.likeCount ?? '0', 10),
-        comments: acc.comments + parseInt(v.statistics?.commentCount ?? '0', 10),
+        comments:
+          acc.comments + parseInt(v.statistics?.commentCount ?? '0', 10),
         count: acc.count + 1,
       }),
       { views: 0, likes: 0, comments: 0, count: 0 },
     );
 
-    const avgViews = totals.count > 0 ? Math.round(totals.views / totals.count) : 0;
+    const avgViews =
+      totals.count > 0 ? Math.round(totals.views / totals.count) : 0;
     const engagementRate =
       totals.views > 0
-        ? parseFloat((((totals.likes + totals.comments) / totals.views) * 100).toFixed(2))
+        ? parseFloat(
+            (((totals.likes + totals.comments) / totals.views) * 100).toFixed(
+              2,
+            ),
+          )
         : 0;
 
     const sorted = [...videos.items].sort(
       (a: any, b: any) =>
-        parseInt(b.statistics?.viewCount ?? '0', 10) - parseInt(a.statistics?.viewCount ?? '0', 10),
+        parseInt(b.statistics?.viewCount ?? '0', 10) -
+        parseInt(a.statistics?.viewCount ?? '0', 10),
     );
     const top = sorted[0];
     const spotlightVideo: PlatformChannelData['spotlightVideo'] = top
@@ -191,7 +210,9 @@ export class YouTubeStrategy implements IPlatformStrategy {
     return { avgViews, engagementRate, spotlightVideo };
   }
 
-  async fetchAnalyticsData(accessToken: string): Promise<PlatformAnalyticsData> {
+  async fetchAnalyticsData(
+    accessToken: string,
+  ): Promise<PlatformAnalyticsData> {
     const today = new Date();
     const ninetyAgo = new Date(today);
     ninetyAgo.setDate(today.getDate() - 90);
@@ -212,7 +233,10 @@ export class YouTubeStrategy implements IPlatformStrategy {
       ),
     ]);
 
-    let watchTimeMins = 0, avgViewDuration = 0, avgViewPct = 0, subscribersGained = 0;
+    let watchTimeMins = 0,
+      avgViewDuration = 0,
+      avgViewPct = 0,
+      subscribersGained = 0;
     if (mainRes.ok) {
       const main = await mainRes.json();
       const row = main.rows?.[0] ?? [];
@@ -231,12 +255,15 @@ export class YouTubeStrategy implements IPlatformStrategy {
     if (demoRes.ok) {
       const demo = await demoRes.json();
       if (demo.rows?.length) {
-        const cols: string[] = (demo.columnHeaders ?? []).map((h: any) => h.name);
+        const cols: string[] = (demo.columnHeaders ?? []).map(
+          (h: any) => h.name,
+        );
         const genderIdx = cols.indexOf('gender');
         const ageIdx = cols.indexOf('ageGroup');
         const pctIdx = cols.indexOf('viewerPercentage');
         const ageBuckets: Record<string, number> = {};
-        let maleSum = 0, femaleSum = 0;
+        let maleSum = 0,
+          femaleSum = 0;
 
         for (const row of demo.rows) {
           const gender = row[genderIdx]?.toLowerCase();
@@ -266,15 +293,25 @@ export class YouTubeStrategy implements IPlatformStrategy {
         const cc = row[countryIdx];
         const views = row[viewsIdx] ?? 0;
         const name = cc
-          ? new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) ?? cc
+          ? (new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) ?? cc)
           : cc;
         topCountries.push({
           country: name,
-          viewPct: total > 0 ? parseFloat(((views / total) * 100).toFixed(1)) : 0,
+          viewPct:
+            total > 0 ? parseFloat(((views / total) * 100).toFixed(1)) : 0,
         });
       }
     }
 
-    return { watchTimeMins, avgViewDuration, avgViewPct, subscribersGained, topCountries, malePct, femalePct, ageDistribution };
+    return {
+      watchTimeMins,
+      avgViewDuration,
+      avgViewPct,
+      subscribersGained,
+      topCountries,
+      malePct,
+      femalePct,
+      ageDistribution,
+    };
   }
 }

@@ -49,7 +49,8 @@ export class ProfileController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, file, cb) => {
-          if (!existsSync(AVATAR_DIR)) mkdirSync(AVATAR_DIR, { recursive: true });
+          if (!existsSync(AVATAR_DIR))
+            mkdirSync(AVATAR_DIR, { recursive: true });
           cb(null, AVATAR_DIR);
         },
         filename: (req, file, cb) => {
@@ -74,7 +75,8 @@ export class ProfileController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, file, cb) => {
-          if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
+          if (!existsSync(UPLOAD_DIR))
+            mkdirSync(UPLOAD_DIR, { recursive: true });
           cb(null, UPLOAD_DIR);
         },
         filename: (req, file, cb) => {
@@ -84,12 +86,20 @@ export class ProfileController {
       }),
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
-        const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+        const allowed = [
+          'application/pdf',
+          'image/jpeg',
+          'image/png',
+          'image/webp',
+        ];
         cb(null, allowed.includes(file.mimetype));
       },
     }),
   )
-  uploadRateCard(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+  uploadRateCard(
+    @Request() req: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
     const fileUrl = `/uploads/rate-cards/${file.filename}`;
     return this.profileService.uploadRateCardFile(req.user.userId, fileUrl);
   }

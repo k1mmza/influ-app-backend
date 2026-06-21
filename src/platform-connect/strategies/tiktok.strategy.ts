@@ -13,7 +13,8 @@ export class TikTokStrategy implements IPlatformStrategy {
   private readonly logger = new Logger(TikTokStrategy.name);
   private readonly AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize';
   private readonly TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
-  private readonly REFRESH_URL = 'https://open.tiktokapis.com/v2/oauth/token/refresh/';
+  private readonly REFRESH_URL =
+    'https://open.tiktokapis.com/v2/oauth/token/refresh/';
   private readonly USER_URL = 'https://open.tiktokapis.com/v2/user/info/';
   private readonly VIDEO_URL = 'https://open.tiktokapis.com/v2/video/list/';
 
@@ -46,7 +47,11 @@ export class TikTokStrategy implements IPlatformStrategy {
     return `${this.AUTH_URL}?${params}`;
   }
 
-  async exchangeCode(code: string, callbackUrl: string, state?: string): Promise<PlatformTokens> {
+  async exchangeCode(
+    code: string,
+    callbackUrl: string,
+    state?: string,
+  ): Promise<PlatformTokens> {
     // Retrieve PKCE code_verifier from state (then remove to prevent replay)
     let codeVerifier: string | undefined;
     if (state) {
@@ -88,7 +93,9 @@ export class TikTokStrategy implements IPlatformStrategy {
     };
   }
 
-  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; expiry: Date }> {
+  async refreshAccessToken(
+    refreshToken: string,
+  ): Promise<{ accessToken: string; expiry: Date }> {
     const res = await fetch(this.REFRESH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -110,10 +117,19 @@ export class TikTokStrategy implements IPlatformStrategy {
     };
   }
 
-  async fetchChannelData(accessToken: string, platformUserId?: string): Promise<PlatformChannelData | null> {
+  async fetchChannelData(
+    accessToken: string,
+    platformUserId?: string,
+  ): Promise<PlatformChannelData | null> {
     const fields = [
-      'open_id', 'union_id', 'avatar_url', 'display_name',
-      'follower_count', 'following_count', 'likes_count', 'video_count',
+      'open_id',
+      'union_id',
+      'avatar_url',
+      'display_name',
+      'follower_count',
+      'following_count',
+      'likes_count',
+      'video_count',
     ].join(',');
 
     const res = await fetch(`${this.USER_URL}?fields=${fields}`, {

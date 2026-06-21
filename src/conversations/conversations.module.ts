@@ -8,5 +8,8 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [ConversationsController],
   providers: [ConversationsService, ChatGateway],
+  // Exported so CampaignsService (application-accept) and InvitationsService (invite-accept)
+  // can reuse ensureConversation — the single shared conversation find-or-create.
+  exports: [ConversationsService],
 })
 export class ConversationsModule {}

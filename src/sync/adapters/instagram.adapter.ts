@@ -40,7 +40,10 @@ export class InstagramAdapter extends PlatformAdapter {
     const clean = handle.replace(/^@/, '');
 
     try {
-      const items = await this.runActor(token, { usernames: [clean], resultsLimit: 5 });
+      const items = await this.runActor(token, {
+        usernames: [clean],
+        resultsLimit: 5,
+      });
       if (!items?.length) return null;
 
       const profile = items[0] as ApifyInstagramProfile;
@@ -53,7 +56,10 @@ export class InstagramAdapter extends PlatformAdapter {
 
       // Pick most-liked post as spotlight
       const topPost = posts.reduce<ApifyInstagramPost | null>(
-        (best, p) => (best === null || (p.likesCount ?? 0) > (best.likesCount ?? 0) ? p : best),
+        (best, p) =>
+          best === null || (p.likesCount ?? 0) > (best.likesCount ?? 0)
+            ? p
+            : best,
         null,
       );
       const spotlightVideo = topPost?.shortCode
@@ -73,21 +79,30 @@ export class InstagramAdapter extends PlatformAdapter {
         engagementRate,
         growthRate: 0,
         profileUrl: `https://www.instagram.com/${clean}/`,
-        avatarUrl: profile.profilePicUrlHd ?? profile.profilePicUrl ?? undefined,
+        avatarUrl:
+          profile.profilePicUrlHd ?? profile.profilePicUrl ?? undefined,
         spotlightVideo,
-        videoTitles: posts.map((p) => p.caption).filter((c): c is string => !!c).slice(0, 10),
+        videoTitles: posts
+          .map((p) => p.caption)
+          .filter((c): c is string => !!c)
+          .slice(0, 10),
         postEngagements: posts.map((p) => ({
           likes: p.likesCount ?? 0,
           comments: p.commentsCount ?? 0,
         })),
       };
     } catch (err: any) {
-      this.logger.error(`Instagram fetch failed for "${handle}": ${err.message}`);
+      this.logger.error(
+        `Instagram fetch failed for "${handle}": ${err.message}`,
+      );
       return null;
     }
   }
 
-  private calcEngagementRate(posts: ApifyInstagramPost[], followers: number): number {
+  private calcEngagementRate(
+    posts: ApifyInstagramPost[],
+    followers: number,
+  ): number {
     if (!posts.length || followers === 0) return 0;
     const total = posts.reduce(
       (acc, p) => ({

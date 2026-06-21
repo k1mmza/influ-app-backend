@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post, Delete, Request, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Delete,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
@@ -30,7 +40,11 @@ export class CampaignsController {
   }
 
   @Patch(':id')
-  updateCampaign(@Request() req: any, @Param('id') id: string, @Body() dto: UpdateCampaignDto) {
+  updateCampaign(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() dto: UpdateCampaignDto,
+  ) {
     return this.campaignsService.updateCampaign(req.user.userId, id, dto);
   }
 
@@ -56,6 +70,11 @@ export class CampaignsController {
     @Param('applicationId') applicationId: string,
     @Body('status') status: string,
   ) {
-    return this.campaignsService.updateApplicationStatus(req.user.userId, campaignId, applicationId, status);
+    return this.campaignsService.updateApplicationStatus(
+      req.user.userId,
+      campaignId,
+      applicationId,
+      status,
+    );
   }
 }

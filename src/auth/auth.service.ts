@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -99,7 +103,9 @@ export class AuthService {
     }
 
     if (!user.password) {
-      throw new UnauthorizedException('This account uses Google sign-in. Please continue with Google.');
+      throw new UnauthorizedException(
+        'This account uses Google sign-in. Please continue with Google.',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);

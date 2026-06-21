@@ -7,7 +7,10 @@ import { SyncJobData } from '../sync/sync.processor';
 import { YouTubeAdapter } from '../sync/adapters/youtube.adapter';
 import { TikTokAdapter } from '../sync/adapters/tiktok.adapter';
 import { InstagramAdapter } from '../sync/adapters/instagram.adapter';
-import { PlatformProfile, PostEngagement } from '../sync/adapters/platform.adapter';
+import {
+  PlatformProfile,
+  PostEngagement,
+} from '../sync/adapters/platform.adapter';
 import { AiAnalysisService, AiChannelAnalysis } from './ai-analysis.service';
 import { SmartSearchService } from './smart-search.service';
 
@@ -35,7 +38,9 @@ export class InfluencersService {
       }
       // Map AI platforms array → single platform string
       if ((aiFilters as any).platforms?.length && !query.platform) {
-        (aiFilters as any).platform = (aiFilters as any).platforms.join(',').toLowerCase();
+        (aiFilters as any).platform = (aiFilters as any).platforms
+          .join(',')
+          .toLowerCase();
       }
       // Merge AI filters with explicit query params (explicit take priority)
       query = { ...aiFilters, ...query, q: undefined };
@@ -74,7 +79,7 @@ export class InfluencersService {
         .split(',')
         .map((c: string) => c.trim().toLowerCase())
         .filter(Boolean);
-        
+
       if (categoryList.length === 1) {
         where.categories = { array_contains: categoryList[0] };
       } else if (categoryList.length > 1) {
@@ -95,30 +100,30 @@ export class InfluencersService {
         .map((p: string) => p.trim().toLowerCase())
         .filter(Boolean);
       if (platformList.length === 1) {
-        platformAccountFilter.platform = { 
-          equals: platformList[0], 
-          mode: 'insensitive' 
+        platformAccountFilter.platform = {
+          equals: platformList[0],
+          mode: 'insensitive',
         };
       } else if (platformList.length > 1) {
         andConditions.push({
-          // Prisma's 'in' operator doesn't natively support mode: 'insensitive'. 
+          // Prisma's 'in' operator doesn't natively support mode: 'insensitive'.
           // Using an OR array ensures it works regardless of database casing.
           OR: platformList.map((p) => ({
-            platformAccounts: { 
-              some: { platform: { equals: p, mode: 'insensitive' } } 
-            }
-          }))
+            platformAccounts: {
+              some: { platform: { equals: p, mode: 'insensitive' } },
+            },
+          })),
         });
       }
     }
 
     if (followerRange && followerRange !== 'All') {
       const ranges: any = {
-        Nano:  { min: 1_000,   max: 10_000 },
-        Micro: { min: 10_000,  max: 100_000 },
-        Mid:   { min: 100_000, max: 500_000 },
+        Nano: { min: 1_000, max: 10_000 },
+        Micro: { min: 10_000, max: 100_000 },
+        Mid: { min: 100_000, max: 500_000 },
         Macro: { min: 500_000, max: 1_000_000 },
-        Mega:  { min: 1_000_000 },
+        Mega: { min: 1_000_000 },
       };
       const range = ranges[followerRange];
       if (range) {
@@ -227,16 +232,29 @@ export class InfluencersService {
   // ── Score helpers ─────────────────────────────────────────────────────────
 
   private readonly ER_BENCHMARK: Record<string, number> = {
-    tiktok: 6, instagram: 3, youtube: 3, facebook: 1, x: 0.5, lemon8: 4,
+    tiktok: 6,
+    instagram: 3,
+    youtube: 3,
+    facebook: 1,
+    x: 0.5,
+    lemon8: 4,
   };
 
   private benchmarkFor(platform: string): number {
     return this.ER_BENCHMARK[platform.toLowerCase()] ?? 4;
   }
 
-  private computeQualityScore(er: number, avgViews: number, followers: number, platform: string): number {
+  private computeQualityScore(
+    er: number,
+    avgViews: number,
+    followers: number,
+    platform: string,
+  ): number {
     const benchmark = this.benchmarkFor(platform);
-    const erScore = Math.min(60, Math.round((er / Math.max(benchmark, 0.1)) * 60));
+    const erScore = Math.min(
+      60,
+      Math.round((er / Math.max(benchmark, 0.1)) * 60),
+    );
     const viewRatio = followers > 0 ? avgViews / followers : 0;
     const viewScore = Math.min(40, Math.round(viewRatio * 200));
     return erScore + viewScore;
@@ -251,29 +269,53 @@ export class InfluencersService {
     qualityScore: number,
   ): number {
     const benchmark = this.benchmarkFor(platform);
-    const engagementQuality = Math.min(100, Math.round((er / Math.max(benchmark, 0.1)) * 100));
+    const engagementQuality = Math.min(
+      100,
+      Math.round((er / Math.max(benchmark, 0.1)) * 100),
+    );
     const growthQuality = Math.min(100, Math.round((growthRate / 20) * 100));
-    const consistencyQuality = Math.min(100, Math.round((followers > 0 ? avgViews / followers : 0) * 300));
+    const consistencyQuality = Math.min(
+      100,
+      Math.round((followers > 0 ? avgViews / followers : 0) * 300),
+    );
     return Math.min(
       100,
       Math.round(
-        engagementQuality * 0.30 +
-        qualityScore      * 0.30 +
-        growthQuality     * 0.25 +
-        consistencyQuality * 0.15,
+        engagementQuality * 0.3 +
+          qualityScore * 0.3 +
+          growthQuality * 0.25 +
+          consistencyQuality * 0.15,
       ),
     );
   }
 
-  private computeScores(accounts: any[], growthRate: number): { qualityScore: number; performanceScore: number } {
+  private computeScores(
+    accounts: any[],
+    growthRate: number,
+  ): { qualityScore: number; performanceScore: number } {
     if (!accounts.length) return { qualityScore: 0, performanceScore: 0 };
-    const main = accounts.reduce((a, b) => (a.followers > b.followers ? a : b), accounts[0]);
+    const main = accounts.reduce(
+      (a, b) => (a.followers > b.followers ? a : b),
+      accounts[0],
+    );
     const er = main.engagementRate ?? 0;
     const avgViews = main.avgViews ?? 0;
     const followers = Math.max(main.followers ?? 0, 1);
     const platform = main.platform ?? '';
-    const qualityScore = this.computeQualityScore(er, avgViews, followers, platform);
-    const performanceScore = this.computePerformanceScore(er, avgViews, followers, platform, growthRate ?? 0, qualityScore);
+    const qualityScore = this.computeQualityScore(
+      er,
+      avgViews,
+      followers,
+      platform,
+    );
+    const performanceScore = this.computePerformanceScore(
+      er,
+      avgViews,
+      followers,
+      platform,
+      growthRate ?? 0,
+      qualityScore,
+    );
     return { qualityScore, performanceScore };
   }
 
@@ -294,17 +336,25 @@ export class InfluencersService {
     let commentScore = 10; // neutral default when no data
     if (posts.length > 0) {
       const avgLikes = posts.reduce((s, p) => s + p.likes, 0) / posts.length;
-      const avgComments = posts.reduce((s, p) => s + p.comments, 0) / posts.length;
+      const avgComments =
+        posts.reduce((s, p) => s + p.comments, 0) / posts.length;
       const ratio = avgLikes > 0 ? avgComments / avgLikes : 0;
-      if (ratio >= 0.05) commentScore = 30;       // >5%: very authentic
-      else if (ratio >= 0.02) commentScore = 22;  // 2-5%: normal
-      else if (ratio >= 0.005) commentScore = 12; // 0.5-2%: below avg
-      else if (ratio >= 0.001) commentScore = 5;  // <0.5%: suspicious
+      if (ratio >= 0.05)
+        commentScore = 30; // >5%: very authentic
+      else if (ratio >= 0.02)
+        commentScore = 22; // 2-5%: normal
+      else if (ratio >= 0.005)
+        commentScore = 12; // 0.5-2%: below avg
+      else if (ratio >= 0.001)
+        commentScore = 5; // <0.5%: suspicious
       else commentScore = 0;
     }
 
     // 2. ER vs benchmark (30pts) — low ER vs peers = inflated followers
-    const erScore = Math.min(30, Math.round((er / Math.max(benchmark, 0.1)) * 30));
+    const erScore = Math.min(
+      30,
+      Math.round((er / Math.max(benchmark, 0.1)) * 30),
+    );
 
     // 3. View-to-follower ratio (20pts) — fake followers don't watch
     const viewRatio = followers > 0 ? avgViews / followers : 0;
@@ -316,7 +366,9 @@ export class InfluencersService {
       const likes = posts.map((p) => p.likes);
       const mean = likes.reduce((s, l) => s + l, 0) / likes.length;
       if (mean > 0) {
-        const stdDev = Math.sqrt(likes.reduce((s, l) => s + (l - mean) ** 2, 0) / likes.length);
+        const stdDev = Math.sqrt(
+          likes.reduce((s, l) => s + (l - mean) ** 2, 0) / likes.length,
+        );
         const cv = stdDev / mean;
         if (cv >= 0.5) varianceScore = 20;
         else if (cv >= 0.3) varianceScore = 15;
@@ -333,7 +385,11 @@ export class InfluencersService {
 
   private formatInfluencer(inf: any) {
     // Stub for async Apify fetch in progress
-    if (inf.isExternal && inf.syncStatus === 'SYNCING' && !inf.platformAccounts?.length) {
+    if (
+      inf.isExternal &&
+      inf.syncStatus === 'SYNCING' &&
+      !inf.platformAccounts?.length
+    ) {
       return {
         id: inf.id,
         handle: inf.externalHandle ?? null,
@@ -352,7 +408,16 @@ export class InfluencersService {
         syncStatus: 'SYNCING',
         lastDataPulledAt: null,
         rateCardFileUrl: null,
-        meta: { country: null, city: null, audienceCountryPercent: null, averageViews: 0, growthRate: 0, qualityScore: 0, responseRate: 0, bio: null },
+        meta: {
+          country: null,
+          city: null,
+          audienceCountryPercent: null,
+          averageViews: 0,
+          growthRate: 0,
+          qualityScore: 0,
+          responseRate: 0,
+          bio: null,
+        },
       };
     }
 
@@ -368,77 +433,113 @@ export class InfluencersService {
 
     const mainAccount = sortedAccounts.length
       ? sortedAccounts.reduce((prev, current) =>
-          prev.followers > current.followers ? prev : current
+          prev.followers > current.followers ? prev : current,
         )
       : null;
 
-    const { qualityScore, performanceScore } = this.computeScores(accounts, inf.growthRate ?? 0);
+    const { qualityScore, performanceScore } = this.computeScores(
+      accounts,
+      inf.growthRate ?? 0,
+    );
 
     const spotlightVideo = mainAccount?.spotlightVideoId
       ? {
           id: mainAccount.spotlightVideoId,
           title: mainAccount.spotlightVideoTitle || '',
-          thumbnail: mainAccount.spotlightThumbnailUrl
-            || (mainAccount.platform === 'youtube'
+          thumbnail:
+            mainAccount.spotlightThumbnailUrl ||
+            (mainAccount.platform === 'youtube'
               ? `https://img.youtube.com/vi/${mainAccount.spotlightVideoId}/hqdefault.jpg`
               : ''),
         }
       : null;
 
     // Per-platform lookup maps for the frontend switcher
-    const spotlightByPlatform = sortedAccounts.reduce((acc, p) => ({
-      ...acc,
-      [p.platform]: p.spotlightVideoId
-        ? {
-            id: p.spotlightVideoId,
-            title: p.spotlightVideoTitle || '',
-            thumbnail: p.spotlightThumbnailUrl
-              || (p.platform === 'youtube'
-                ? `https://img.youtube.com/vi/${p.spotlightVideoId}/hqdefault.jpg`
-                : ''),
-          }
-        : null,
-    }), {} as Record<string, { id: string; title: string; thumbnail: string } | null>);
-
-    // ── New analytics per-platform maps ──────────────────────────────────────
-    const watchTimeMinsByPlatform = sortedAccounts.reduce((acc, p) => ({
-      ...acc,
-      [p.platform]: p.watchTimeMins ?? null,
-    }), {} as Record<string, number | null>);
-
-    const avgViewDurationByPlatform = sortedAccounts.reduce((acc, p) => ({
-      ...acc,
-      [p.platform]: p.avgViewDuration ?? null,
-    }), {} as Record<string, number | null>);
-
-    const avgViewPctByPlatform = sortedAccounts.reduce((acc, p) => ({
-      ...acc,
-      [p.platform]: p.avgViewPct ?? null,
-    }), {} as Record<string, number | null>);
-
-    const subscribersGainedByPlatform = sortedAccounts.reduce((acc, p) => ({
-      ...acc,
-      [p.platform]: p.subscribersGained ?? null,
-    }), {} as Record<string, number | null>);
-
-    const topCountriesByPlatform = sortedAccounts.reduce((acc, p) => ({
-      ...acc,
-      [p.platform]: p.topCountries ?? null,
-    }), {} as Record<string, any>);
-
-    const audienceInsightsByPlatform = sortedAccounts.reduce((acc, p) => {
-      const insight = p.audienceInsights?.[0] ?? null;
-      return {
+    const spotlightByPlatform = sortedAccounts.reduce(
+      (acc, p) => ({
         ...acc,
-        [p.platform]: insight
+        [p.platform]: p.spotlightVideoId
           ? {
-              malePct: insight.malePct ?? null,
-              femalePct: insight.femalePct ?? null,
-              ageDistribution: insight.ageDistribution ?? null,
+              id: p.spotlightVideoId,
+              title: p.spotlightVideoTitle || '',
+              thumbnail:
+                p.spotlightThumbnailUrl ||
+                (p.platform === 'youtube'
+                  ? `https://img.youtube.com/vi/${p.spotlightVideoId}/hqdefault.jpg`
+                  : ''),
             }
           : null,
-      };
-    }, {} as Record<string, { malePct: number | null; femalePct: number | null; ageDistribution: any } | null>);
+      }),
+      {} as Record<
+        string,
+        { id: string; title: string; thumbnail: string } | null
+      >,
+    );
+
+    // ── New analytics per-platform maps ──────────────────────────────────────
+    const watchTimeMinsByPlatform = sortedAccounts.reduce(
+      (acc, p) => ({
+        ...acc,
+        [p.platform]: p.watchTimeMins ?? null,
+      }),
+      {} as Record<string, number | null>,
+    );
+
+    const avgViewDurationByPlatform = sortedAccounts.reduce(
+      (acc, p) => ({
+        ...acc,
+        [p.platform]: p.avgViewDuration ?? null,
+      }),
+      {} as Record<string, number | null>,
+    );
+
+    const avgViewPctByPlatform = sortedAccounts.reduce(
+      (acc, p) => ({
+        ...acc,
+        [p.platform]: p.avgViewPct ?? null,
+      }),
+      {} as Record<string, number | null>,
+    );
+
+    const subscribersGainedByPlatform = sortedAccounts.reduce(
+      (acc, p) => ({
+        ...acc,
+        [p.platform]: p.subscribersGained ?? null,
+      }),
+      {} as Record<string, number | null>,
+    );
+
+    const topCountriesByPlatform = sortedAccounts.reduce(
+      (acc, p) => ({
+        ...acc,
+        [p.platform]: p.topCountries ?? null,
+      }),
+      {} as Record<string, any>,
+    );
+
+    const audienceInsightsByPlatform = sortedAccounts.reduce(
+      (acc, p) => {
+        const insight = p.audienceInsights?.[0] ?? null;
+        return {
+          ...acc,
+          [p.platform]: insight
+            ? {
+                malePct: insight.malePct ?? null,
+                femalePct: insight.femalePct ?? null,
+                ageDistribution: insight.ageDistribution ?? null,
+              }
+            : null,
+        };
+      },
+      {} as Record<
+        string,
+        {
+          malePct: number | null;
+          femalePct: number | null;
+          ageDistribution: any;
+        } | null
+      >,
+    );
 
     // Main account audience insight (first insight of the highest-follower account)
     const mainInsight = mainAccount?.audienceInsights?.[0] ?? null;
@@ -449,12 +550,35 @@ export class InfluencersService {
       name: inf.user?.name || mainAccount?.displayName || 'Unknown',
       platforms: sortedAccounts.map((p) => p.platform),
       followers: mainAccount?.followers ?? 0,
-      followersByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.followers }), {}),
-      avgViewsByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avgViews }), {}),
-      engagementByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.engagementRate }), {}),
-      handleByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.handle }), {}),
-      avatarByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.avatarUrl ?? null }), {}),
-      syncedAtByPlatform: sortedAccounts.reduce((acc, p) => ({ ...acc, [p.platform]: p.syncedAt ?? null }), {}),
+      followersByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.followers }),
+        {},
+      ),
+      avgViewsByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.avgViews }),
+        {},
+      ),
+      engagementByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.engagementRate }),
+        {},
+      ),
+      handleByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.handle }),
+        {},
+      ),
+      // Per-platform public profile URLs — used as contact points on the profile.
+      profileUrlByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.profileUrl ?? null }),
+        {},
+      ),
+      avatarByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.avatarUrl ?? null }),
+        {},
+      ),
+      syncedAtByPlatform: sortedAccounts.reduce(
+        (acc, p) => ({ ...acc, [p.platform]: p.syncedAt ?? null }),
+        {},
+      ),
       spotlightByPlatform,
       // Analytics maps
       watchTimeMinsByPlatform,
@@ -464,7 +588,9 @@ export class InfluencersService {
       topCountriesByPlatform,
       audienceInsightsByPlatform,
       engagementRate: mainAccount?.engagementRate ?? 0,
-      category: Array.isArray(inf.categories) ? inf.categories[0] : (inf.categories || 'lifestyle'),
+      category: Array.isArray(inf.categories)
+        ? inf.categories[0]
+        : inf.categories || 'lifestyle',
       performanceScore,
       ratePerPost: 0,
       stylePresent: Array.isArray(inf.styleTags) ? inf.styleTags : [],
@@ -551,7 +677,10 @@ export class InfluencersService {
       .map((inf) => this.formatInfluencer(inf));
   }
 
-  async claimProfile(externalInfluencerId: string, claimerInfluencerId: string): Promise<void> {
+  async claimProfile(
+    externalInfluencerId: string,
+    claimerInfluencerId: string,
+  ): Promise<void> {
     const [external, claimer] = await Promise.all([
       this.prisma.influencerProfile.findUnique({
         where: { id: externalInfluencerId },
@@ -564,11 +693,14 @@ export class InfluencersService {
     ]);
 
     if (!external || !claimer) throw new Error('Profile not found');
-    if (!external.isExternal) throw new Error('Target is not an external profile');
+    if (!external.isExternal)
+      throw new Error('Target is not an external profile');
     if (external.claimed) throw new Error('Profile already claimed');
 
     const claimerHandles = new Set(
-      claimer.platformAccounts.map((a) => `${a.platform}:${a.handle.toLowerCase()}`),
+      claimer.platformAccounts.map(
+        (a) => `${a.platform}:${a.handle.toLowerCase()}`,
+      ),
     );
     const accountsToTransfer = external.platformAccounts.filter(
       (a) => !claimerHandles.has(`${a.platform}:${a.handle.toLowerCase()}`),
@@ -593,7 +725,9 @@ export class InfluencersService {
         where: { id: claimerInfluencerId },
         data: {
           bio: claimer.bio ?? external.bio ?? undefined,
-          categories: (claimer.categories ?? external.categories ?? undefined) as any,
+          categories: (claimer.categories ??
+            external.categories ??
+            undefined) as any,
           growthRate: claimer.growthRate ?? external.growthRate ?? undefined,
         },
       }),
@@ -603,7 +737,12 @@ export class InfluencersService {
   async lookupByHandle(
     platform: string,
     handle: string,
-  ): Promise<{ found: boolean; source?: 'db' | 'api'; loading?: boolean; influencer?: any }> {
+  ): Promise<{
+    found: boolean;
+    source?: 'db' | 'api';
+    loading?: boolean;
+    influencer?: any;
+  }> {
     await this.ttl.recordEvent('', 'SEARCH').catch(() => {});
     const cleanHandle = handle.replace(/^@/, '');
 
@@ -626,7 +765,12 @@ export class InfluencersService {
       const influencer = account.influencer;
       // Still loading from a previous async fetch
       if (influencer.syncStatus === 'SYNCING') {
-        return { found: true, source: 'db' as const, loading: true, influencer: this.formatInfluencer(influencer) };
+        return {
+          found: true,
+          source: 'db' as const,
+          loading: true,
+          influencer: this.formatInfluencer(influencer),
+        };
       }
       await this.ttl.recordEvent(influencer.id, 'SEARCH');
       const shouldSync = await this.ttl.checkAndFlag(influencer.id);
@@ -641,7 +785,11 @@ export class InfluencersService {
           handle: cleanHandle,
         });
       }
-      return { found: true, source: 'db' as const, influencer: this.formatInfluencer(influencer) };
+      return {
+        found: true,
+        source: 'db' as const,
+        influencer: this.formatInfluencer(influencer),
+      };
     }
 
     const p = platform.toLowerCase();
@@ -651,9 +799,17 @@ export class InfluencersService {
       const profile = await this.youtube.fetchProfile(cleanHandle);
       if (profile) {
         const aiData = await this.aiAnalysis.analyzeYouTubeChannel(
-          profile.displayName, profile.bio, profile.topVideoIds ?? [], profile.videoTitles ?? [],
+          profile.displayName,
+          profile.bio,
+          profile.topVideoIds ?? [],
+          profile.videoTitles ?? [],
         );
-        return this.saveAndReturnExternalProfile(profile, p, cleanHandle, aiData);
+        return this.saveAndReturnExternalProfile(
+          profile,
+          p,
+          cleanHandle,
+          aiData,
+        );
       }
       return { found: false };
     }
@@ -668,7 +824,11 @@ export class InfluencersService {
           lastSyncedAt: new Date(),
           nextRefreshAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           platformAccounts: {
-            create: { platform: p, handle: cleanHandle, displayName: cleanHandle },
+            create: {
+              platform: p,
+              handle: cleanHandle,
+              displayName: cleanHandle,
+            },
           },
         },
         include: {
@@ -677,13 +837,22 @@ export class InfluencersService {
         },
       });
       this.fetchAndUpdateProfile(stub.id, p, cleanHandle).catch(() => {});
-      return { found: true, source: 'api' as const, loading: true, influencer: this.formatInfluencer(stub) };
+      return {
+        found: true,
+        source: 'api' as const,
+        loading: true,
+        influencer: this.formatInfluencer(stub),
+      };
     }
 
     return { found: false };
   }
 
-  private async fetchAndUpdateProfile(profileId: string, platform: string, handle: string): Promise<void> {
+  private async fetchAndUpdateProfile(
+    profileId: string,
+    platform: string,
+    handle: string,
+  ): Promise<void> {
     try {
       let profile: PlatformProfile | null = null;
       let aiData: AiChannelAnalysis | null = null;
@@ -691,22 +860,45 @@ export class InfluencersService {
       if (platform === 'tiktok') {
         profile = await this.tiktok.fetchProfile(handle);
         if (profile) {
-          aiData = await this.aiAnalysis.analyzeProfile('TikTok', profile.displayName, profile.bio, profile.videoTitles ?? []);
+          aiData = await this.aiAnalysis.analyzeProfile(
+            'TikTok',
+            profile.displayName,
+            profile.bio,
+            profile.videoTitles ?? [],
+          );
         }
       } else if (platform === 'instagram') {
         profile = await this.instagram.fetchProfile(handle);
         if (profile) {
-          aiData = await this.aiAnalysis.analyzeProfile('Instagram', profile.displayName, profile.bio, profile.videoTitles ?? []);
+          aiData = await this.aiAnalysis.analyzeProfile(
+            'Instagram',
+            profile.displayName,
+            profile.bio,
+            profile.videoTitles ?? [],
+          );
         }
       }
 
       if (!profile) {
-        await this.prisma.influencerProfile.update({ where: { id: profileId }, data: { syncStatus: 'IDLE' } });
+        await this.prisma.influencerProfile.update({
+          where: { id: profileId },
+          data: { syncStatus: 'IDLE' },
+        });
         return;
       }
 
-      const fakeAccount = [{ platform, followers: profile.followers, engagementRate: profile.engagementRate, avgViews: profile.avgViews }];
-      const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+      const fakeAccount = [
+        {
+          platform,
+          followers: profile.followers,
+          engagementRate: profile.engagementRate,
+          avgViews: profile.avgViews,
+        },
+      ];
+      const { qualityScore, performanceScore } = this.computeScores(
+        fakeAccount,
+        profile.growthRate ?? 0,
+      );
       const country = profile.country ?? aiData?.audienceCountry ?? null;
       const audienceQualityScore = this.computeAudienceQualityScore(
         profile.postEngagements ?? [],
@@ -718,7 +910,8 @@ export class InfluencersService {
 
       // Download avatar now so the CDN URL never expires in our DB
       const avatarUrl = profile.avatarUrl
-        ? (await this.downloadAsDataUrl(profile.avatarUrl)) ?? profile.avatarUrl
+        ? ((await this.downloadAsDataUrl(profile.avatarUrl)) ??
+          profile.avatarUrl)
         : null;
 
       await this.prisma.$transaction([
@@ -726,8 +919,10 @@ export class InfluencersService {
           where: { id: profileId },
           data: {
             bio: aiData?.bio ?? profile.bio ?? null,
-            categories: (aiData?.category ? [aiData.category.toLowerCase()] : []) as any,
-            styleTags: (aiData?.tags?.map(t => t.toLowerCase()) ?? []) as any,
+            categories: (aiData?.category
+              ? [aiData.category.toLowerCase()]
+              : []) as any,
+            styleTags: (aiData?.tags?.map((t) => t.toLowerCase()) ?? []) as any,
             growthRate: profile.growthRate ?? null,
             country,
             qualityScore,
@@ -755,8 +950,12 @@ export class InfluencersService {
 
       await this.ttl.recordEvent(profileId, 'SEARCH');
     } catch (err: any) {
-      this.logger.error(`Background fetch failed for ${platform}/${handle}: ${err.message}`);
-      await this.prisma.influencerProfile.update({ where: { id: profileId }, data: { syncStatus: 'IDLE' } }).catch(() => {});
+      this.logger.error(
+        `Background fetch failed for ${platform}/${handle}: ${err.message}`,
+      );
+      await this.prisma.influencerProfile
+        .update({ where: { id: profileId }, data: { syncStatus: 'IDLE' } })
+        .catch(() => {});
     }
   }
 
@@ -766,13 +965,18 @@ export class InfluencersService {
     handle: string,
     aiData: AiChannelAnalysis | null,
   ) {
-    const fakeAccount = [{
-      platform,
-      followers: profile.followers,
-      engagementRate: profile.engagementRate,
-      avgViews: profile.avgViews,
-    }];
-    const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+    const fakeAccount = [
+      {
+        platform,
+        followers: profile.followers,
+        engagementRate: profile.engagementRate,
+        avgViews: profile.avgViews,
+      },
+    ];
+    const { qualityScore, performanceScore } = this.computeScores(
+      fakeAccount,
+      profile.growthRate ?? 0,
+    );
     const audienceQualityScore = this.computeAudienceQualityScore(
       profile.postEngagements ?? [],
       profile.engagementRate,
@@ -789,7 +993,7 @@ export class InfluencersService {
         externalHandle: handle,
         bio: aiData?.bio ?? profile.bio ?? null,
         categories: aiData?.category ? [aiData.category.toLowerCase()] : [],
-        styleTags: aiData?.tags?.map(t => t.toLowerCase()) ?? [],
+        styleTags: aiData?.tags?.map((t) => t.toLowerCase()) ?? [],
         growthRate: profile.growthRate ?? null,
         country,
         qualityScore,
@@ -842,13 +1046,18 @@ export class InfluencersService {
     platform: string,
     aiData?: AiChannelAnalysis | null,
   ) {
-    const fakeAccount = [{
-      platform,
-      followers: profile.followers,
-      engagementRate: profile.engagementRate,
-      avgViews: profile.avgViews,
-    }];
-    const { qualityScore, performanceScore } = this.computeScores(fakeAccount, profile.growthRate ?? 0);
+    const fakeAccount = [
+      {
+        platform,
+        followers: profile.followers,
+        engagementRate: profile.engagementRate,
+        avgViews: profile.avgViews,
+      },
+    ];
+    const { qualityScore, performanceScore } = this.computeScores(
+      fakeAccount,
+      profile.growthRate ?? 0,
+    );
 
     return {
       id: `live-${platform.toLowerCase()}-${profile.handle}`,

@@ -1,4 +1,10 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
 import { v4 as uuidv4 } from 'uuid';
@@ -10,13 +16,22 @@ export class ConversationsService {
     private chatGateway: ChatGateway,
   ) {}
 
-  private async resolveClientBrandId(_userId: string, role: string, brandProfile: any, agencyProfile: any): Promise<string | null> {
+  private async resolveClientBrandId(
+    _userId: string,
+    role: string,
+    brandProfile: any,
+    agencyProfile: any,
+  ): Promise<string | null> {
     if (role === 'BRAND') {
-      const cb = await this.prisma.clientBrand.findFirst({ where: { brandProfileId: brandProfile?.id } });
+      const cb = await this.prisma.clientBrand.findFirst({
+        where: { brandProfileId: brandProfile?.id },
+      });
       return cb?.id ?? null;
     }
     if (role === 'AGENCY') {
-      const cb = await this.prisma.clientBrand.findFirst({ where: { agencyId: agencyProfile?.id } });
+      const cb = await this.prisma.clientBrand.findFirst({
+        where: { agencyId: agencyProfile?.id },
+      });
       return cb?.id ?? null;
     }
     return null;
@@ -25,7 +40,11 @@ export class ConversationsService {
   async findAll(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { brandProfile: true, agencyProfile: true, influencerProfile: true },
+      include: {
+        brandProfile: true,
+        agencyProfile: true,
+        influencerProfile: true,
+      },
     });
     if (!user) throw new NotFoundException('User not found');
 
@@ -33,7 +52,9 @@ export class ConversationsService {
     if (user.role === 'INFLUENCER') {
       where.influencerId = user.influencerProfile?.id;
     } else if (user.role === 'BRAND') {
-      const clientBrand = await this.prisma.clientBrand.findFirst({ where: { brandProfileId: user.brandProfile?.id } });
+      const clientBrand = await this.prisma.clientBrand.findFirst({
+        where: { brandProfileId: user.brandProfile?.id },
+      });
       where.clientBrandId = clientBrand?.id;
     } else if (user.role === 'AGENCY') {
       where.clientBrand = { agencyId: user.agencyProfile?.id };
@@ -56,7 +77,10 @@ export class ConversationsService {
         id: conv.id,
         campaignId: conv.campaignId,
         campaignName: conv.campaign?.name ?? null,
-        partnerName: user.role === 'INFLUENCER' ? conv.clientBrand?.brandName : (conv.influencer?.user?.name ?? null),
+        partnerName:
+          user.role === 'INFLUENCER'
+            ? conv.clientBrand?.brandName
+            : (conv.influencer?.user?.name ?? null),
         partnerAvatar: user.role !== 'INFLUENCER' ? null : null,
         lastMessage: conv.messages[0]?.content ?? '',
         lastMessageAt: conv.messages[0]?.sentAt ?? conv.createdAt,
@@ -68,26 +92,25 @@ export class ConversationsService {
     });
   }
 
-  async createOrFind(userId: string, influencerId: string, campaignId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { brandProfile: true, agencyProfile: true },
-    });
-    if (!user) throw new NotFoundException('User not found');
-    if (user.role === 'INFLUENCER') throw new BadRequestException('Influencers cannot initiate conversations');
-
-    const clientBrandId = await this.resolveClientBrandId(userId, user.role as string, user.brandProfile, user.agencyProfile);
-    if (!clientBrandId) throw new BadRequestException('No client brand found for this account');
-
-    const existing = await this.prisma.conversation.findFirst({
+  /**
+   * Single source of truth for conversation creation: idempotent find-or-create for the
+   * (influencerId, clientBrandId, campaignId) triplet. Pass a transaction client (`tx`) to run
+   * inside an existing transaction; defaults to the base Prisma client otherwise.
+   * Consumed by createOrFind (below), CampaignsService.updateApplicationStatus (application-accept)
+   * and InvitationsService (invite-accept).
+   */
+  async ensureConversation(
+    influencerId: string,
+    clientBrandId: string,
+    campaignId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const existing = await tx.conversation.findFirst({
       where: { influencerId, clientBrandId, campaignId },
     });
     if (existing) return existing;
 
-    const campaign = await this.prisma.campaign.findUnique({ where: { id: campaignId } });
-    if (!campaign) throw new NotFoundException('Campaign not found');
-
-    return this.prisma.conversation.create({
+    return tx.conversation.create({
       data: {
         id: uuidv4(),
         influencerId,
@@ -97,6 +120,36 @@ export class ConversationsService {
         updatedAt: new Date(),
       },
     });
+  }
+
+  async createOrFind(userId: string, influencerId: string, campaignId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { brandProfile: true, agencyProfile: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role === 'INFLUENCER')
+      throw new BadRequestException(
+        'Influencers cannot initiate conversations',
+      );
+
+    const clientBrandId = await this.resolveClientBrandId(
+      userId,
+      user.role as string,
+      user.brandProfile,
+      user.agencyProfile,
+    );
+    if (!clientBrandId)
+      throw new BadRequestException('No client brand found for this account');
+
+    // A conversation row always references an existing campaign (non-null FK, and deleteCampaign
+    // removes conversations first), so checking here is equivalent to the previous create-branch check.
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+
+    return this.ensureConversation(influencerId, clientBrandId, campaignId);
   }
 
   async findMessages(conversationId: string) {
@@ -127,7 +180,8 @@ export class ConversationsService {
 
   async updatePhase(conversationId: string, workPhase: string) {
     const valid = ['contact', 'brief', 'draft', 'work', 'payment'];
-    if (!valid.includes(workPhase)) throw new BadRequestException('Invalid work phase');
+    if (!valid.includes(workPhase))
+      throw new BadRequestException('Invalid work phase');
     return this.prisma.conversation.update({
       where: { id: conversationId },
       data: { workPhase, updatedAt: new Date() },
@@ -159,18 +213,29 @@ export class ConversationsService {
 
   async markPhaseReady(conversationId: string, userId: string) {
     const [user, conv] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: userId }, include: { influencerProfile: true } }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { influencerProfile: true },
+      }),
       this.prisma.conversation.findUnique({ where: { id: conversationId } }),
     ]);
     if (!user) throw new NotFoundException('User not found');
     if (!conv) throw new NotFoundException('Conversation not found');
 
-    const isInfluencer = user.role === 'INFLUENCER' && user.influencerProfile?.id === conv.influencerId;
+    const isInfluencer =
+      user.role === 'INFLUENCER' &&
+      user.influencerProfile?.id === conv.influencerId;
     const isBrand = user.role === 'BRAND' || user.role === 'AGENCY';
-    if (!isInfluencer && !isBrand) throw new ForbiddenException('Not a participant in this conversation');
+    if (!isInfluencer && !isBrand)
+      throw new ForbiddenException('Not a participant in this conversation');
 
-    const updateData: any = isInfluencer ? { influencerPhaseReady: true } : { brandPhaseReady: true };
-    let updated = await this.prisma.conversation.update({ where: { id: conversationId }, data: updateData });
+    const updateData: any = isInfluencer
+      ? { influencerPhaseReady: true }
+      : { brandPhaseReady: true };
+    let updated = await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: updateData,
+    });
 
     // Both sides confirmed — advance to next phase and reset flags
     if (updated.brandPhaseReady && updated.influencerPhaseReady) {
@@ -180,7 +245,12 @@ export class ConversationsService {
       if (nextPhase !== updated.workPhase) {
         updated = await this.prisma.conversation.update({
           where: { id: conversationId },
-          data: { workPhase: nextPhase, brandPhaseReady: false, influencerPhaseReady: false, updatedAt: new Date() },
+          data: {
+            workPhase: nextPhase,
+            brandPhaseReady: false,
+            influencerPhaseReady: false,
+            updatedAt: new Date(),
+          },
         });
       }
     }
@@ -191,7 +261,11 @@ export class ConversationsService {
       influencerPhaseReady: updated.influencerPhaseReady,
     });
 
-    return { workPhase: updated.workPhase, brandPhaseReady: updated.brandPhaseReady, influencerPhaseReady: updated.influencerPhaseReady };
+    return {
+      workPhase: updated.workPhase,
+      brandPhaseReady: updated.brandPhaseReady,
+      influencerPhaseReady: updated.influencerPhaseReady,
+    };
   }
 
   async saveAttachment(conversationId: string, type: string, fileUrl: string) {

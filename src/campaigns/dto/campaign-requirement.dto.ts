@@ -1,4 +1,11 @@
-import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsArray,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CampaignRequirementDto {
   @IsOptional()
@@ -6,8 +13,11 @@ export class CampaignRequirementDto {
   @Min(0)
   minFollowers?: number;
 
+  // Relaxed from @IsInt to @IsNumber: the schema is Float? and the AI returns
+  // fractional engagement rates like 2.5. This also affects the normal Create
+  // Campaign path (shared DTO) — intentional and correct, the column was always Float.
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   minEngagementRate?: number;
 

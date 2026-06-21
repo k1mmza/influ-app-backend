@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Query, Param, Body, BadRequestException, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Param,
+  Body,
+  BadRequestException,
+  UseGuards,
+} from '@nestjs/common';
 import { InfluencersService } from './influencers.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -13,10 +22,7 @@ export class InfluencersController {
 
   // Must be declared before :id to avoid route conflict
   @Get('lookup')
-  lookup(
-    @Query('platform') platform: string,
-    @Query('handle') handle: string,
-  ) {
+  lookup(@Query('platform') platform: string, @Query('handle') handle: string) {
     if (!platform || !handle) {
       throw new BadRequestException('platform and handle are required');
     }
@@ -26,7 +32,8 @@ export class InfluencersController {
   @UseGuards(JwtAuthGuard)
   @Get('claim-candidates')
   getClaimCandidates(@Query('influencerId') influencerId: string) {
-    if (!influencerId) throw new BadRequestException('influencerId is required');
+    if (!influencerId)
+      throw new BadRequestException('influencerId is required');
     return this.influencersService.getClaimCandidates(influencerId);
   }
 
@@ -36,8 +43,12 @@ export class InfluencersController {
     @Param('externalInfluencerId') externalInfluencerId: string,
     @Body('claimerInfluencerId') claimerInfluencerId: string,
   ) {
-    if (!claimerInfluencerId) throw new BadRequestException('claimerInfluencerId is required');
-    return this.influencersService.claimProfile(externalInfluencerId, claimerInfluencerId);
+    if (!claimerInfluencerId)
+      throw new BadRequestException('claimerInfluencerId is required');
+    return this.influencersService.claimProfile(
+      externalInfluencerId,
+      claimerInfluencerId,
+    );
   }
 
   @Get(':id')

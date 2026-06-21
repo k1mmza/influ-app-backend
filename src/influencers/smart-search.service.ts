@@ -74,7 +74,10 @@ Only include fields clearly mentioned or strongly implied. Return {} if nothing 
 
       const data = await response.json();
       const text = data.content?.[0]?.text ?? '{}';
-      const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      const clean = text
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/, '')
+        .trim();
       const parsed = JSON.parse(clean);
       this.logger.log(`Smart search parsed: ${JSON.stringify(parsed)}`);
       return parsed;

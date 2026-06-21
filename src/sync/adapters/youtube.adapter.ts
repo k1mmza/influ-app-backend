@@ -50,7 +50,10 @@ export class YouTubeAdapter extends PlatformAdapter {
       const channel = await this.resolveChannel(handle, apiKey);
       if (!channel) return null;
 
-      const subscribers = parseInt(channel.statistics.subscriberCount ?? '0', 10);
+      const subscribers = parseInt(
+        channel.statistics.subscriberCount ?? '0',
+        10,
+      );
       const videoCount = parseInt(channel.statistics.videoCount ?? '0', 10);
       const totalViews = parseInt(channel.statistics.viewCount ?? '0', 10);
       const uploadsId = channel.contentDetails.relatedPlaylists.uploads;
@@ -61,7 +64,11 @@ export class YouTubeAdapter extends PlatformAdapter {
       let topVideoIds: string[] = [];
       let videoTitles: string[] = [];
 
-      let postEngagements: { likes: number; comments: number; views: number }[] = [];
+      let postEngagements: {
+        likes: number;
+        comments: number;
+        views: number;
+      }[] = [];
       if (uploadsId) {
         const stats = await this.recentVideoStats(uploadsId, apiKey);
         if (stats.avgViews > 0) avgViews = stats.avgViews;
@@ -73,11 +80,13 @@ export class YouTubeAdapter extends PlatformAdapter {
       }
 
       const cleanHandle =
-        channel.snippet.customUrl?.replace(/^@/, '') ?? handle.replace(/^@/, '');
+        channel.snippet.customUrl?.replace(/^@/, '') ??
+        handle.replace(/^@/, '');
 
       const countryCode = channel.snippet.country;
       const country = countryCode
-        ? new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ?? countryCode
+        ? (new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ??
+          countryCode)
         : undefined;
 
       return {
@@ -140,37 +149,68 @@ export class YouTubeAdapter extends PlatformAdapter {
     const playlist = await this.get<YTListResponse<any>>(
       `/playlistItems?part=contentDetails&playlistId=${encodeURIComponent(uploadsPlaylistId)}&maxResults=50&key=${apiKey}`,
     );
-    if (!playlist?.items?.length) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [], postEngagements: [] };
+    if (!playlist?.items?.length)
+      return {
+        avgViews: 0,
+        engagementRate: 0,
+        topVideoIds: [],
+        videoTitles: [],
+        postEngagements: [],
+      };
 
     const ids = playlist.items
       .map((i: any) => i.contentDetails?.videoId as string)
       .filter(Boolean)
       .join(',');
 
-    if (!ids) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [], postEngagements: [] };
+    if (!ids)
+      return {
+        avgViews: 0,
+        engagementRate: 0,
+        topVideoIds: [],
+        videoTitles: [],
+        postEngagements: [],
+      };
 
     const videos = await this.get<YTListResponse<any>>(
       `/videos?part=statistics,snippet&id=${encodeURIComponent(ids)}&key=${apiKey}`,
     );
-    if (!videos?.items?.length) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [], postEngagements: [] };
+    if (!videos?.items?.length)
+      return {
+        avgViews: 0,
+        engagementRate: 0,
+        topVideoIds: [],
+        videoTitles: [],
+        postEngagements: [],
+      };
 
     const totals = videos.items.reduce(
       (acc: any, v: any) => ({
         views: acc.views + parseInt(v.statistics?.viewCount ?? '0', 10),
         likes: acc.likes + parseInt(v.statistics?.likeCount ?? '0', 10),
-        comments: acc.comments + parseInt(v.statistics?.commentCount ?? '0', 10),
+        comments:
+          acc.comments + parseInt(v.statistics?.commentCount ?? '0', 10),
         count: acc.count + 1,
       }),
       { views: 0, likes: 0, comments: 0, count: 0 },
     );
 
-    if (totals.count === 0) return { avgViews: 0, engagementRate: 0, topVideoIds: [], videoTitles: [], postEngagements: [] };
+    if (totals.count === 0)
+      return {
+        avgViews: 0,
+        engagementRate: 0,
+        topVideoIds: [],
+        videoTitles: [],
+        postEngagements: [],
+      };
 
     const avgViews = Math.round(totals.views / totals.count);
     const engagementRate =
       totals.views > 0
         ? parseFloat(
-            (((totals.likes + totals.comments) / totals.views) * 100).toFixed(2),
+            (((totals.likes + totals.comments) / totals.views) * 100).toFixed(
+              2,
+            ),
           )
         : 0;
 
@@ -211,7 +251,14 @@ export class YouTubeAdapter extends PlatformAdapter {
       views: parseInt(v.statistics?.viewCount ?? '0', 10),
     }));
 
-    return { avgViews, engagementRate, spotlightVideo, topVideoIds, videoTitles, postEngagements };
+    return {
+      avgViews,
+      engagementRate,
+      spotlightVideo,
+      topVideoIds,
+      videoTitles,
+      postEngagements,
+    };
   }
 
   private async get<T>(path: string): Promise<T | null> {

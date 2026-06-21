@@ -1,6 +1,14 @@
 import {
-  Controller, Get, Post, Patch, Body, Param,
-  UseGuards, Request, UseInterceptors, UploadedFile,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -29,7 +37,11 @@ export class ConversationsController {
     @Body('influencerId') influencerId: string,
     @Body('campaignId') campaignId: string,
   ) {
-    return this.conversationsService.createOrFind(req.user.userId, influencerId, campaignId);
+    return this.conversationsService.createOrFind(
+      req.user.userId,
+      influencerId,
+      campaignId,
+    );
   }
 
   @Get(':id/messages')
@@ -38,7 +50,11 @@ export class ConversationsController {
   }
 
   @Post(':id/messages')
-  sendMessage(@Request() req, @Param('id') id: string, @Body('content') content: string) {
+  sendMessage(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('content') content: string,
+  ) {
     return this.conversationsService.sendMessage(req.user.userId, id, content);
   }
 
@@ -68,7 +84,10 @@ export class ConversationsController {
       storage: diskStorage({
         destination: (req, file, cb) => cb(null, UPLOAD_DIR),
         filename: (req, file, cb) =>
-          cb(null, `${Date.now()}-${Math.round(Math.random() * 1e6)}${extname(file.originalname)}`),
+          cb(
+            null,
+            `${Date.now()}-${Math.round(Math.random() * 1e6)}${extname(file.originalname)}`,
+          ),
       }),
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {

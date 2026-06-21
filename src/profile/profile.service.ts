@@ -79,7 +79,8 @@ export class ProfileService {
       // 1. Update shared user fields (name, avatarUrl)
       const userUpdates: Record<string, any> = {};
       if (dto.name !== undefined) userUpdates.name = dto.name;
-      if (dto.avatarUrl !== undefined) userUpdates.avatarUrl = dto.avatarUrl || null;
+      if (dto.avatarUrl !== undefined)
+        userUpdates.avatarUrl = dto.avatarUrl || null;
       if (Object.keys(userUpdates).length > 0) {
         await tx.user.update({ where: { id: userId }, data: userUpdates });
       }
@@ -88,16 +89,30 @@ export class ProfileService {
       if (user.role === 'BRAND' && dto.profile) {
         await tx.brandProfile.upsert({
           where: { userId },
-          create: { userId, ...dto.profile, socialLinks: dto.profile.socialLinks as any },
-          update: { ...dto.profile, socialLinks: dto.profile.socialLinks as any },
+          create: {
+            userId,
+            ...dto.profile,
+            socialLinks: dto.profile.socialLinks as any,
+          },
+          update: {
+            ...dto.profile,
+            socialLinks: dto.profile.socialLinks as any,
+          },
         });
       }
 
       if (user.role === 'AGENCY' && dto.profile) {
         await tx.agencyProfile.upsert({
           where: { userId },
-          create: { userId, ...dto.profile, socialLinks: dto.profile.socialLinks as any },
-          update: { ...dto.profile, socialLinks: dto.profile.socialLinks as any },
+          create: {
+            userId,
+            ...dto.profile,
+            socialLinks: dto.profile.socialLinks as any,
+          },
+          update: {
+            ...dto.profile,
+            socialLinks: dto.profile.socialLinks as any,
+          },
         });
       }
 
@@ -154,10 +169,16 @@ export class ProfileService {
   async uploadRateCardFile(userId: string, fileUrl: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    if (user.role !== 'INFLUENCER') throw new ForbiddenException('Only influencers can upload a rate card');
+    if (user.role !== 'INFLUENCER')
+      throw new ForbiddenException('Only influencers can upload a rate card');
 
-    const profile = await this.prisma.influencerProfile.findUnique({ where: { userId } });
-    if (!profile) throw new BadRequestException('Influencer profile not found — complete your profile first');
+    const profile = await this.prisma.influencerProfile.findUnique({
+      where: { userId },
+    });
+    if (!profile)
+      throw new BadRequestException(
+        'Influencer profile not found — complete your profile first',
+      );
 
     await this.prisma.influencerProfile.update({
       where: { userId },
@@ -217,7 +238,10 @@ export class ProfileService {
   }
 
   // ─── PRIVATE: CALCULATE COMPLETENESS ─────────────────────────────────────────
-  private async calculateCompleteness(userId: string, tx?: any): Promise<number> {
+  private async calculateCompleteness(
+    userId: string,
+    tx?: any,
+  ): Promise<number> {
     const client = tx ?? this.prisma;
 
     const user = await client.user.findUnique({
@@ -257,14 +281,11 @@ export class ProfileService {
 
     if (user.role === 'INFLUENCER') {
       const p = user.influencerProfile;
-      const fields = [
-        p?.bio,
-        p?.categories,
-        p?.styleTags,
-        p?.keywords,
-      ];
+      const fields = [p?.bio, p?.categories, p?.styleTags, p?.keywords];
       total += fields.length;
-      filled += fields.filter(v => v && (Array.isArray(v) ? v.length > 0 : true)).length;
+      filled += fields.filter(
+        (v) => v && (Array.isArray(v) ? v.length > 0 : true),
+      ).length;
 
       // Platform accounts and rate card count as single items
       total += 2;

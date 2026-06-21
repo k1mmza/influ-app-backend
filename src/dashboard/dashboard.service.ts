@@ -28,28 +28,35 @@ export class DashboardService {
       return this.getAgencyDashboard(user);
     }
 
-    return { role: user.role, message: 'Dashboard data not implemented for this role' };
+    return {
+      role: user.role,
+      message: 'Dashboard data not implemented for this role',
+    };
   }
 
   private async getInfluencerDashboard(user: any) {
     const influencerId = user.influencerProfile?.id;
-    
-    // Count active campaigns (where application status is ACCEPTED/APPROVED - check schema)
-    // In schema, CampaignApplication has status "PENDING" by default. 
-    // Let's assume "ACCEPTED" for active campaigns.
-    const activeCampaignsCount = influencerId ? await this.prisma.campaignApplication.count({
-      where: {
-        influencerId: influencerId,
-        status: 'ACCEPTED',
-      },
-    }) : 0;
 
-    const pendingAppsCount = influencerId ? await this.prisma.campaignApplication.count({
-      where: {
-        influencerId: influencerId,
-        status: 'PENDING',
-      },
-    }) : 0;
+    // Count active campaigns (where application status is ACCEPTED/APPROVED - check schema)
+    // In schema, CampaignApplication has status "PENDING" by default.
+    // Let's assume "ACCEPTED" for active campaigns.
+    const activeCampaignsCount = influencerId
+      ? await this.prisma.campaignApplication.count({
+          where: {
+            influencerId: influencerId,
+            status: 'ACCEPTED',
+          },
+        })
+      : 0;
+
+    const pendingAppsCount = influencerId
+      ? await this.prisma.campaignApplication.count({
+          where: {
+            influencerId: influencerId,
+            status: 'PENDING',
+          },
+        })
+      : 0;
 
     return {
       role: 'influencer',
@@ -69,18 +76,20 @@ export class DashboardService {
 
   private async getBrandDashboard(user: any) {
     const brandProfileId = user.brandProfile?.id;
-    
+
     // For brands, they are linked to ClientBrand in the schema
     const clientBrand = await this.prisma.clientBrand.findFirst({
       where: { brandProfileId: brandProfileId },
     });
 
-    const activeCampaignsCount = clientBrand ? await this.prisma.campaign.count({
-      where: {
-        clientBrandId: clientBrand.id,
-        status: 'ACTIVE',
-      },
-    }) : 0;
+    const activeCampaignsCount = clientBrand
+      ? await this.prisma.campaign.count({
+          where: {
+            clientBrandId: clientBrand.id,
+            status: 'ACTIVE',
+          },
+        })
+      : 0;
 
     return {
       role: 'brand',
@@ -91,22 +100,26 @@ export class DashboardService {
         avgEngagement: 0, // Placeholder
         totalReach: 0, // Placeholder
       },
-      activeCampaigns: clientBrand ? await this.prisma.campaign.findMany({
-        where: { clientBrandId: clientBrand.id, status: 'ACTIVE' },
-        take: 5,
-      }) : [],
+      activeCampaigns: clientBrand
+        ? await this.prisma.campaign.findMany({
+            where: { clientBrandId: clientBrand.id, status: 'ACTIVE' },
+            take: 5,
+          })
+        : [],
     };
   }
 
   private async getAgencyDashboard(user: any) {
     const agencyProfileId = user.agencyProfile?.id;
-    
-    const activeBriefsCount = agencyProfileId ? await this.prisma.campaign.count({
-      where: {
-        clientBrand: { agencyId: agencyProfileId },
-        status: 'ACTIVE',
-      },
-    }) : 0;
+
+    const activeBriefsCount = agencyProfileId
+      ? await this.prisma.campaign.count({
+          where: {
+            clientBrand: { agencyId: agencyProfileId },
+            status: 'ACTIVE',
+          },
+        })
+      : 0;
 
     return {
       role: 'agency',

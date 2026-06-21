@@ -14,7 +14,12 @@ import { InstagramStrategy } from './strategies/instagram.strategy';
     }),
   ],
   controllers: [PlatformConnectController],
-  providers: [PlatformConnectService, YouTubeStrategy, TikTokStrategy, InstagramStrategy],
+  providers: [
+    PlatformConnectService,
+    YouTubeStrategy,
+    TikTokStrategy,
+    InstagramStrategy,
+  ],
   exports: [PlatformConnectService],
 })
 export class PlatformConnectModule {}

@@ -1,5 +1,13 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { CampaignRequirementDto } from './campaign-requirement.dto';
 
 export class CreateCampaignDto {

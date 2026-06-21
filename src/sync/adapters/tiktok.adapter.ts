@@ -62,19 +62,30 @@ export class TikTokAdapter extends PlatformAdapter {
       const totalHearts = author?.heart ?? 0;
       const videoCount = author?.video ?? 0;
 
-      const engagementRate = this.calcEngagementRate(videos, totalHearts, followers, videoCount);
+      const engagementRate = this.calcEngagementRate(
+        videos,
+        totalHearts,
+        followers,
+        videoCount,
+      );
       const avgViews = this.calcAvgViews(videos);
 
       // Pick most-viewed video as spotlight
       const topVideo = videos.reduce<ApifyTikTokItem | null>(
-        (best, v) => (best === null || (v.playCount ?? 0) > (best.playCount ?? 0) ? v : best),
+        (best, v) =>
+          best === null || (v.playCount ?? 0) > (best.playCount ?? 0)
+            ? v
+            : best,
         null,
       );
       const spotlightVideo = topVideo?.id
         ? {
             id: topVideo.id,
             title: topVideo.text?.substring(0, 100) ?? '',
-            thumbnail: topVideo.videoMeta?.coverUrl ?? topVideo.videoMeta?.originalCoverUrl ?? '',
+            thumbnail:
+              topVideo.videoMeta?.coverUrl ??
+              topVideo.videoMeta?.originalCoverUrl ??
+              '',
           }
         : undefined;
 
@@ -89,7 +100,10 @@ export class TikTokAdapter extends PlatformAdapter {
         profileUrl: `https://www.tiktok.com/@${clean}`,
         avatarUrl: author?.avatar ?? author?.originalAvatarUrl ?? undefined,
         spotlightVideo,
-        videoTitles: videos.map((v) => v.text).filter((t): t is string => !!t).slice(0, 10),
+        videoTitles: videos
+          .map((v) => v.text)
+          .filter((t): t is string => !!t)
+          .slice(0, 10),
         postEngagements: videos.map((v) => ({
           likes: v.diggCount ?? 0,
           comments: v.commentCount ?? 0,
@@ -112,7 +126,11 @@ export class TikTokAdapter extends PlatformAdapter {
       const totals = videos.reduce(
         (acc, v) => ({
           views: acc.views + (v.playCount ?? 0),
-          eng: acc.eng + (v.diggCount ?? 0) + (v.commentCount ?? 0) + (v.shareCount ?? 0),
+          eng:
+            acc.eng +
+            (v.diggCount ?? 0) +
+            (v.commentCount ?? 0) +
+            (v.shareCount ?? 0),
           count: acc.count + 1,
         }),
         { views: 0, eng: 0, count: 0 },

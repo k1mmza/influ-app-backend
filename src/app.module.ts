@@ -12,6 +12,8 @@ import { SyncModule } from './sync/sync.module';
 import { SmartPlanModule } from './smart-plan/smart-plan.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { PlatformConnectModule } from './platform-connect/platform-connect.module';
+import { ShortlistModule } from './shortlist/shortlist.module';
+import { InvitationsModule } from './invitations/invitations.module';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { PlatformConnectModule } from './platform-connect/platform-connect.modul
     SmartPlanModule,
     CampaignsModule,
     PlatformConnectModule,
+    ShortlistModule,
+    InvitationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

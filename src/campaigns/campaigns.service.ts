@@ -1,28 +1,48 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
+import { ConversationsService } from '../conversations/conversations.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 
 @Injectable()
 export class CampaignsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private conversations: ConversationsService,
+  ) {}
 
   private async findUserWithProfiles(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { brandProfile: true, agencyProfile: true, influencerProfile: { include: { platformAccounts: true } } },
+      include: {
+        brandProfile: true,
+        agencyProfile: true,
+        influencerProfile: { include: { platformAccounts: true } },
+      },
     });
     if (!user) throw new NotFoundException('User not found');
     return user;
   }
 
   private assertCampaignOwnership(user: any, campaign: any) {
-    if (user.role === 'BRAND' && user.brandProfile?.id && campaign.clientBrand?.brandProfileId === user.brandProfile.id) {
+    if (
+      user.role === 'BRAND' &&
+      user.brandProfile?.id &&
+      campaign.clientBrand?.brandProfileId === user.brandProfile.id
+    ) {
       return;
     }
-    if (user.role === 'AGENCY' && user.agencyProfile?.id && campaign.clientBrand?.agencyId === user.agencyProfile.id) {
+    if (
+      user.role === 'AGENCY' &&
+      user.agencyProfile?.id &&
+      campaign.clientBrand?.agencyId === user.agencyProfile.id
+    ) {
       return;
     }
     throw new NotFoundException('Campaign not found');
@@ -47,7 +67,9 @@ export class CampaignsService {
 
   private async getOrCreateClientBrandForBrand(user: any) {
     if (!user.brandProfile?.id) {
-      throw new ForbiddenException('Brand profile is required to create campaigns');
+      throw new ForbiddenException(
+        'Brand profile is required to create campaigns',
+      );
     }
 
     const existing = await this.prisma.clientBrand.findFirst({
@@ -65,7 +87,7 @@ export class CampaignsService {
       isRegistered: true,
     };
     console.log('Creating ClientBrand for brand:', user.brandProfile.id);
-    const clientBrand = await this.prisma.clientBrand.create({data, });
+    const clientBrand = await this.prisma.clientBrand.create({ data });
     console.log('Created ClientBrand:', clientBrand.id);
 
     return clientBrand;
@@ -79,14 +101,21 @@ export class CampaignsService {
       const clientBrand = await this.getOrCreateClientBrandForBrand(user);
       clientBrandId = clientBrand.id;
     } else if (user.role === 'AGENCY' && user.agencyProfile) {
-      if (!dto.clientBrandId) throw new BadRequestException('clientBrandId is required for agency users');
-      const clientBrand = await this.prisma.clientBrand.findUnique({ where: { id: dto.clientBrandId } });
+      if (!dto.clientBrandId)
+        throw new BadRequestException(
+          'clientBrandId is required for agency users',
+        );
+      const clientBrand = await this.prisma.clientBrand.findUnique({
+        where: { id: dto.clientBrandId },
+      });
       if (!clientBrand || clientBrand.agencyId !== user.agencyProfile.id) {
         throw new ForbiddenException('Invalid client brand');
       }
       clientBrandId = clientBrand.id;
     } else {
-      throw new ForbiddenException('Only brand and agency users can create campaigns');
+      throw new ForbiddenException(
+        'Only brand and agency users can create campaigns',
+      );
     }
 
     return this.prisma.campaign.create({
@@ -128,7 +157,11 @@ export class CampaignsService {
     return campaign;
   }
 
-  async updateCampaign(userId: string, campaignId: string, dto: UpdateCampaignDto) {
+  async updateCampaign(
+    userId: string,
+    campaignId: string,
+    dto: UpdateCampaignDto,
+  ) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
@@ -175,7 +208,11 @@ export class CampaignsService {
             ...updateData,
             requirements: { create: this.mapRequirements(dto.requirements) },
           },
-          include: { requirements: true, applications: true, clientBrand: true },
+          include: {
+            requirements: true,
+            applications: true,
+            clientBrand: true,
+          },
         }),
       ]);
       return this.prisma.campaign.findUnique({
@@ -201,19 +238,25 @@ export class CampaignsService {
     this.assertCampaignOwnership(user, campaign);
 
     if (!['DRAFT', 'CANCELLED'].includes(campaign.status)) {
-      throw new BadRequestException('Only draft or cancelled campaigns can be deleted');
+      throw new BadRequestException(
+        'Only draft or cancelled campaigns can be deleted',
+      );
     }
 
     // Delete all related records in dependency order before removing the campaign
     await this.prisma.$transaction([
       this.prisma.trackingResult.deleteMany({ where: { campaignId } }),
-      this.prisma.submittedContent.deleteMany({ where: { application: { campaignId } } }),
+      this.prisma.submittedContent.deleteMany({
+        where: { application: { campaignId } },
+      }),
       this.prisma.campaignApplication.deleteMany({ where: { campaignId } }),
       this.prisma.campaignRequirement.deleteMany({ where: { campaignId } }),
       this.prisma.smartPlanBrief.deleteMany({ where: { campaignId } }),
       this.prisma.review.deleteMany({ where: { campaignId } }),
       this.prisma.pastCollaboration.deleteMany({ where: { campaignId } }),
-      this.prisma.message.deleteMany({ where: { conversation: { campaignId } } }),
+      this.prisma.message.deleteMany({
+        where: { conversation: { campaignId } },
+      }),
       this.prisma.conversation.deleteMany({ where: { campaignId } }),
       this.prisma.payment.deleteMany({ where: { campaignId } }),
       this.prisma.campaign.delete({ where: { id: campaignId } }),
@@ -243,39 +286,58 @@ export class CampaignsService {
         ? requirement.platforms.map((p: any) => String(p).toLowerCase())
         : [];
       const candidateAccounts = requirementPlatforms.length
-        ? accounts.filter((account) => requirementPlatforms.includes(account.platform.toLowerCase()))
+        ? accounts.filter((account) =>
+            requirementPlatforms.includes(account.platform.toLowerCase()),
+          )
         : accounts;
 
       if (!candidateAccounts.length) {
-        throw new BadRequestException('You do not meet the campaign requirements');
+        throw new BadRequestException(
+          'You do not meet the campaign requirements',
+        );
       }
 
       const meetsRequirement = candidateAccounts.some((account) => {
-        if (requirement.minFollowers != null && (account.followers ?? 0) < requirement.minFollowers) {
+        if (
+          requirement.minFollowers != null &&
+          (account.followers ?? 0) < requirement.minFollowers
+        ) {
           return false;
         }
-        if (requirement.minEngagementRate != null && (account.engagementRate ?? 0) < requirement.minEngagementRate) {
+        if (
+          requirement.minEngagementRate != null &&
+          (account.engagementRate ?? 0) < requirement.minEngagementRate
+        ) {
           return false;
         }
-        if (requirement.minAvgViews != null && (account.avgViews ?? 0) < requirement.minAvgViews) {
+        if (
+          requirement.minAvgViews != null &&
+          (account.avgViews ?? 0) < requirement.minAvgViews
+        ) {
           return false;
         }
         return true;
       });
 
       if (!meetsRequirement) {
-        throw new BadRequestException('You do not meet the campaign requirements');
+        throw new BadRequestException(
+          'You do not meet the campaign requirements',
+        );
       }
     }
 
-    const existingApplication = await this.prisma.campaignApplication.findFirst({
-      where: {
-        campaignId,
-        influencerId: user.influencerProfile.id,
+    const existingApplication = await this.prisma.campaignApplication.findFirst(
+      {
+        where: {
+          campaignId,
+          influencerId: user.influencerProfile.id,
+        },
       },
-    });
+    );
     if (existingApplication) {
-      throw new BadRequestException('You have already applied to this campaign');
+      throw new BadRequestException(
+        'You have already applied to this campaign',
+      );
     }
 
     return this.prisma.campaignApplication.create({
@@ -333,7 +395,12 @@ export class CampaignsService {
     }));
   }
 
-  async updateApplicationStatus(userId: string, campaignId: string, applicationId: string, status: string) {
+  async updateApplicationStatus(
+    userId: string,
+    campaignId: string,
+    applicationId: string,
+    status: string,
+  ) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
@@ -360,42 +427,33 @@ export class CampaignsService {
     // TASK 1: when accepting, auto-create a conversation (idempotent — safe for double-clicks)
     if (status === 'ACCEPTED') {
       const clientBrandId = campaign.clientBrand?.id;
-      if (!clientBrandId) throw new BadRequestException('Campaign has no associated client brand');
+      if (!clientBrandId)
+        throw new BadRequestException(
+          'Campaign has no associated client brand',
+        );
 
-      const [updatedApplication, conversation] = await this.prisma.$transaction(async (tx) => {
-        // Prevent race condition: find-or-create inside the transaction
-        let conv = await tx.conversation.findFirst({
-          where: {
-            influencerId: application.influencerId,
+      const [updatedApplication, conversation] = await this.prisma.$transaction(
+        async (tx) => {
+          // Shared idempotent find-or-create (race-safe inside this transaction).
+          const conv = await this.conversations.ensureConversation(
+            application.influencerId,
             clientBrandId,
             campaignId,
-          },
-        });
+            tx,
+          );
 
-        if (!conv) {
-          conv = await tx.conversation.create({
-            data: {
-              id: uuidv4(),
-              influencerId: application.influencerId,
-              clientBrandId,
-              campaignId,
-              workPhase: 'contact',
-              updatedAt: new Date(),
-            },
+          // TASK 4: if status changes away from ACCEPTED later, the conversation is intentionally kept.
+          // See updateApplicationStatus callers — conversation is never deleted here.
+          // TODO: conversation is intentionally kept even if application is later rejected — preserves message history
+
+          const updated = await tx.campaignApplication.update({
+            where: { id: applicationId },
+            data: { status },
           });
-        }
 
-        // TASK 4: if status changes away from ACCEPTED later, the conversation is intentionally kept.
-        // See updateApplicationStatus callers — conversation is never deleted here.
-        // TODO: conversation is intentionally kept even if application is later rejected — preserves message history
-
-        const updated = await tx.campaignApplication.update({
-          where: { id: applicationId },
-          data: { status },
-        });
-
-        return [updated, conv];
-      });
+          return [updated, conv];
+        },
+      );
 
       return { ...updatedApplication, conversationId: conversation.id };
     }

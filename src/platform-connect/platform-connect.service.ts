@@ -12,7 +12,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { YouTubeStrategy } from './strategies/youtube.strategy';
 import { TikTokStrategy } from './strategies/tiktok.strategy';
 import { InstagramStrategy } from './strategies/instagram.strategy';
-import type { IPlatformStrategy, PlatformChannelData, PlatformAnalyticsData, PlatformTokens } from './strategies/platform-strategy.interface';
+import type {
+  IPlatformStrategy,
+  PlatformChannelData,
+  PlatformAnalyticsData,
+  PlatformTokens,
+} from './strategies/platform-strategy.interface';
 
 @Injectable()
 export class PlatformConnectService {
@@ -62,7 +67,7 @@ export class PlatformConnectService {
   async handleCallback(code: string, stateToken: string): Promise<string> {
     let payload: { userId: string; platform: string; purpose: string };
     try {
-      payload = this.jwtService.verify(stateToken) as any;
+      payload = this.jwtService.verify(stateToken);
     } catch {
       throw new UnauthorizedException('Invalid or expired OAuth state');
     }
@@ -77,8 +82,14 @@ export class PlatformConnectService {
       include: { influencerProfile: true },
     });
     if (!user) throw new UnauthorizedException();
-    if (user.role !== 'INFLUENCER') throw new ForbiddenException('Only influencers can connect platform accounts');
-    if (!user.influencerProfile) throw new BadRequestException('Complete your profile before linking a platform');
+    if (user.role !== 'INFLUENCER')
+      throw new ForbiddenException(
+        'Only influencers can connect platform accounts',
+      );
+    if (!user.influencerProfile)
+      throw new BadRequestException(
+        'Complete your profile before linking a platform',
+      );
 
     const strat = this.strategy(platform);
     // Pass state to exchangeCode so PKCE strategies (e.g. TikTok) can retrieve the code_verifier
@@ -88,16 +99,29 @@ export class PlatformConnectService {
     const [channelData, analyticsData] = await Promise.all([
       strat.fetchChannelData(accessToken, tokens.platformUserId),
       strat.fetchAnalyticsData
-        ? strat.fetchAnalyticsData(accessToken, tokens.platformUserId).catch((e) => {
-            this.logger.warn(`${platform} analytics fetch failed: ${e.message}`);
-            return null;
-          })
+        ? strat
+            .fetchAnalyticsData(accessToken, tokens.platformUserId)
+            .catch((e) => {
+              this.logger.warn(
+                `${platform} analytics fetch failed: ${e.message}`,
+              );
+              return null;
+            })
         : Promise.resolve(null),
     ]);
 
-    if (!channelData) throw new InternalServerErrorException(`Could not retrieve ${platform} account data`);
+    if (!channelData)
+      throw new InternalServerErrorException(
+        `Could not retrieve ${platform} account data`,
+      );
 
-    await this.persistAccount(user.influencerProfile.id, platform, tokens, channelData, analyticsData);
+    await this.persistAccount(
+      user.influencerProfile.id,
+      platform,
+      tokens,
+      channelData,
+      analyticsData,
+    );
     return userId;
   }
 
@@ -121,10 +145,15 @@ export class PlatformConnectService {
         accessToken = refreshed.accessToken;
         await this.prisma.platformAccount.update({
           where: { id: platformAccountId },
-          data: { accessToken: refreshed.accessToken, tokenExpiry: refreshed.expiry },
+          data: {
+            accessToken: refreshed.accessToken,
+            tokenExpiry: refreshed.expiry,
+          },
         });
       } catch (e: any) {
-        this.logger.error(`Token refresh failed for account ${platformAccountId}: ${e.message}`);
+        this.logger.error(
+          `Token refresh failed for account ${platformAccountId}: ${e.message}`,
+        );
         return;
       }
     }
@@ -132,7 +161,9 @@ export class PlatformConnectService {
     const [channelData, analyticsData] = await Promise.all([
       strat.fetchChannelData(accessToken, account.channelId ?? undefined),
       strat.fetchAnalyticsData
-        ? strat.fetchAnalyticsData(accessToken, account.channelId ?? undefined).catch(() => null)
+        ? strat
+            .fetchAnalyticsData(accessToken, account.channelId ?? undefined)
+            .catch(() => null)
         : Promise.resolve(null),
     ]);
 
@@ -158,7 +189,9 @@ export class PlatformConnectService {
       platformAccountId,
     );
 
-    this.logger.log(`OAuth sync complete for ${account.platform} account ${platformAccountId}`);
+    this.logger.log(
+      `OAuth sync complete for ${account.platform} account ${platformAccountId}`,
+    );
   }
 
   // ── 4. Disconnect a platform ──────────────────────────────────────────────
@@ -212,19 +245,30 @@ export class PlatformConnectService {
 
     let account: any;
     if (existingAccountId) {
-      account = await this.prisma.platformAccount.update({ where: { id: existingAccountId }, data });
+      account = await this.prisma.platformAccount.update({
+        where: { id: existingAccountId },
+        data,
+      });
     } else {
       const existing = await this.prisma.platformAccount.findFirst({
         where: { influencerId, platform },
       });
       if (existing) {
-        account = await this.prisma.platformAccount.update({ where: { id: existing.id }, data });
+        account = await this.prisma.platformAccount.update({
+          where: { id: existing.id },
+          data,
+        });
       } else {
-        account = await this.prisma.platformAccount.create({ data: { influencerId, ...data } });
+        account = await this.prisma.platformAccount.create({
+          data: { influencerId, ...data },
+        });
       }
     }
 
-    if (analytics && (analytics.malePct != null || analytics.femalePct != null)) {
+    if (
+      analytics &&
+      (analytics.malePct != null || analytics.femalePct != null)
+    ) {
       const insightData = {
         malePct: analytics.malePct,
         femalePct: analytics.femalePct,
@@ -234,9 +278,14 @@ export class PlatformConnectService {
         where: { platformAccountId: account.id },
       });
       if (insight) {
-        await this.prisma.audienceInsight.update({ where: { id: insight.id }, data: insightData });
+        await this.prisma.audienceInsight.update({
+          where: { id: insight.id },
+          data: insightData,
+        });
       } else {
-        await this.prisma.audienceInsight.create({ data: { platformAccountId: account.id, ...insightData } });
+        await this.prisma.audienceInsight.create({
+          data: { platformAccountId: account.id, ...insightData },
+        });
       }
     }
 

@@ -49,7 +49,11 @@ export class SyncProcessor extends WorkerHost {
       // For YouTube: prefer OAuth path when refresh token is available
       if (this.platformConnect) {
         const linked = await this.prisma.platformAccount.findFirst({
-          where: { influencerId, platform: platform.toLowerCase(), refreshToken: { not: null } },
+          where: {
+            influencerId,
+            platform: platform.toLowerCase(),
+            refreshToken: { not: null },
+          },
         });
         if (linked) {
           this.logger.log(`Using OAuth tokens for ${platform}/@${handle}`);
@@ -67,7 +71,9 @@ export class SyncProcessor extends WorkerHost {
 
       const profile = await adapter.fetchProfile(handle);
       if (!profile) {
-        this.logger.warn(`Adapter returned null for ${platform}/@${handle} — API not wired yet`);
+        this.logger.warn(
+          `Adapter returned null for ${platform}/@${handle} — API not wired yet`,
+        );
         return;
       }
 

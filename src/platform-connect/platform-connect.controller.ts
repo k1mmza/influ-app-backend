@@ -40,7 +40,9 @@ export class PlatformConnectController {
     // Decode platform from state for the redirect query param
     let platform = 'platform';
     try {
-      const decoded = JSON.parse(Buffer.from(state.split('.')[1], 'base64').toString());
+      const decoded = JSON.parse(
+        Buffer.from(state.split('.')[1], 'base64').toString(),
+      );
       platform = decoded.platform ?? 'platform';
     } catch {
       // leave as default
@@ -48,7 +50,9 @@ export class PlatformConnectController {
 
     const redirect = (url: string) => {
       res.setHeader('Content-Type', 'text/html');
-      res.send(`<html><body><script>window.location.replace(${JSON.stringify(url)})</script></body></html>`);
+      res.send(
+        `<html><body><script>window.location.replace(${JSON.stringify(url)})</script></body></html>`,
+      );
     };
 
     if (error) {

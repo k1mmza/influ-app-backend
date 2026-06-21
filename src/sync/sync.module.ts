@@ -21,6 +21,12 @@ import { PlatformConnectModule } from '../platform-connect/platform-connect.modu
     InstagramAdapter,
     YouTubeAdapter,
   ],
-  exports: [TtlService, BullModule, YouTubeAdapter, TikTokAdapter, InstagramAdapter],
+  exports: [
+    TtlService,
+    BullModule,
+    YouTubeAdapter,
+    TikTokAdapter,
+    InstagramAdapter,
+  ],
 })
 export class SyncModule {}

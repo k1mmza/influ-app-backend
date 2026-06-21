@@ -13,7 +13,8 @@ export class InstagramStrategy implements IPlatformStrategy {
   private readonly AUTH_URL = 'https://api.instagram.com/oauth/authorize';
   private readonly TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
   private readonly LONG_LIVED_URL = 'https://graph.instagram.com/access_token';
-  private readonly REFRESH_URL = 'https://graph.instagram.com/refresh_access_token';
+  private readonly REFRESH_URL =
+    'https://graph.instagram.com/refresh_access_token';
   private readonly GRAPH_URL = 'https://graph.instagram.com';
 
   getAuthUrl(state: string, callbackUrl: string): string {
@@ -27,7 +28,11 @@ export class InstagramStrategy implements IPlatformStrategy {
     return `${this.AUTH_URL}?${params}`;
   }
 
-  async exchangeCode(code: string, callbackUrl: string, state?: string): Promise<PlatformTokens> {
+  async exchangeCode(
+    code: string,
+    callbackUrl: string,
+    state?: string,
+  ): Promise<PlatformTokens> {
     // Step 1: Exchange code for short-lived token
     const shortLivedBody = new URLSearchParams({
       client_id: process.env.INSTAGRAM_APP_ID!,
@@ -63,7 +68,9 @@ export class InstagramStrategy implements IPlatformStrategy {
 
     if (!longRes.ok) {
       const text = await longRes.text();
-      this.logger.warn(`Instagram long-lived token exchange failed: ${text}. Falling back to short-lived token.`);
+      this.logger.warn(
+        `Instagram long-lived token exchange failed: ${text}. Falling back to short-lived token.`,
+      );
       // Fall back to short-lived token (1 hour)
       return {
         accessToken: shortAccessToken,
@@ -87,7 +94,9 @@ export class InstagramStrategy implements IPlatformStrategy {
     };
   }
 
-  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; expiry: Date }> {
+  async refreshAccessToken(
+    refreshToken: string,
+  ): Promise<{ accessToken: string; expiry: Date }> {
     // Instagram long-lived tokens are refreshed by calling the refresh endpoint with the token itself
     const params = new URLSearchParams({
       grant_type: 'ig_refresh_token',
@@ -101,11 +110,16 @@ export class InstagramStrategy implements IPlatformStrategy {
 
     return {
       accessToken: data.access_token,
-      expiry: new Date(Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000),
+      expiry: new Date(
+        Date.now() + (data.expires_in ?? 60 * 24 * 60 * 60) * 1000,
+      ),
     };
   }
 
-  async fetchChannelData(accessToken: string, platformUserId?: string): Promise<PlatformChannelData | null> {
+  async fetchChannelData(
+    accessToken: string,
+    platformUserId?: string,
+  ): Promise<PlatformChannelData | null> {
     const params = new URLSearchParams({
       fields: 'id,username,account_type,media_count',
       access_token: accessToken,
