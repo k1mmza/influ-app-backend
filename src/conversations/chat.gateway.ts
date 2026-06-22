@@ -46,4 +46,18 @@ export class ChatGateway {
       .to(`conversation:${conversationId}`)
       .emit('phase-update', payload);
   }
+
+  // Signals participants to refetch drafts after a create/edit/delete/review.
+  emitDraftsUpdate(conversationId: string) {
+    this.server
+      .to(`conversation:${conversationId}`)
+      .emit('drafts-update', { conversationId });
+  }
+
+  // Signals participants to refetch payments after a create/proof/confirm.
+  emitPaymentsUpdate(conversationId: string) {
+    this.server
+      .to(`conversation:${conversationId}`)
+      .emit('payments-update', { conversationId });
+  }
 }

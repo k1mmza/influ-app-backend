@@ -68,6 +68,8 @@ export class InfluencersService {
       stylePresent,
       availabilityStatus,
       country,
+      audienceGender,
+      audienceAgeGroup,
     } = query;
 
     const where: any = {};
@@ -168,6 +170,52 @@ export class InfluencersService {
       });
     }
 
+    // ── Audience demographics (from AudienceInsight on connected accounts) ─────
+    // These live in AudienceInsight (malePct/femalePct + ageDistribution JSON),
+    // currently only populated for YouTube-connected accounts via Analytics.
+    if (audienceGender && audienceGender !== 'All') {
+      const g = (audienceGender as string).toLowerCase();
+      let genderCond: any = null;
+      if (g === 'female') genderCond = { femalePct: { gte: 55 } };
+      else if (g === 'male') genderCond = { malePct: { gte: 55 } };
+      // "Mixed" = balanced split (neither gender clearly dominates)
+      else if (g === 'mixed')
+        genderCond = { femalePct: { gte: 40, lte: 60 } };
+      if (genderCond) {
+        andConditions.push({
+          platformAccounts: { some: { audienceInsights: { some: genderCond } } },
+        });
+      }
+    }
+
+    if (audienceAgeGroup && audienceAgeGroup !== 'All') {
+      // Map the UI bracket to YouTube ageGroup keys; "45+" spans three buckets.
+      const ageBucketMap: Record<string, string[]> = {
+        '18-24': ['age18-24'],
+        '25-34': ['age25-34'],
+        '35-44': ['age35-44'],
+        '45+': ['age45-54', 'age55-64', 'age65-'],
+      };
+      const buckets = ageBucketMap[audienceAgeGroup as string];
+      if (buckets) {
+        // "Core" bracket = a significant share of the audience (>= 25%).
+        const AGE_THRESHOLD = 25;
+        andConditions.push({
+          platformAccounts: {
+            some: {
+              audienceInsights: {
+                some: {
+                  OR: buckets.map((b) => ({
+                    ageDistribution: { path: [b], gte: AGE_THRESHOLD },
+                  })),
+                },
+              },
+            },
+          },
+        });
+      }
+    }
+
     if (andConditions.length > 0) {
       where.AND = andConditions;
     }
@@ -218,15 +266,37 @@ export class InfluencersService {
       where.country = { equals: country, mode: 'insensitive' };
     }
 
-    const influencers = await this.prisma.influencerProfile.findMany({
-      where,
-      include: {
-        user: { select: { name: true, email: true } },
-        platformAccounts: { include: { audienceInsights: true } },
-      },
-    });
+    // ── Pagination ───────────────────────────────────────────────────────────
+    // Default 15 per page (5 rows × 3 cols on the grid); clamp to a sane max.
+    const limit = Math.min(Math.max(parseInt(query.limit, 10) || 15, 1), 60);
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const skip = (page - 1) * limit;
 
-    return influencers.map((inf) => this.formatInfluencer(inf));
+    const [influencers, total] = await this.prisma.$transaction([
+      this.prisma.influencerProfile.findMany({
+        where,
+        include: {
+          user: { select: { name: true, email: true } },
+          platformAccounts: { include: { audienceInsights: true } },
+        },
+        // Best matches first; `id` tiebreaker keeps paging stable across requests.
+        orderBy: [
+          { performanceScore: { sort: 'desc', nulls: 'last' } },
+          { id: 'asc' },
+        ],
+        skip,
+        take: limit,
+      }),
+      this.prisma.influencerProfile.count({ where }),
+    ]);
+
+    return {
+      data: influencers.map((inf) => this.formatInfluencer(inf)),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
   }
 
   // ── Score helpers ─────────────────────────────────────────────────────────

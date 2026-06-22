@@ -49,6 +49,9 @@ lerna-debug.log*
 # Resources
 resources/
 
+# Uploaded files (runtime user content — served via /uploads, not version-controlled)
+uploads/
+
 # Runtime data
 pids
 *.pid

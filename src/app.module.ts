@@ -14,6 +14,8 @@ import { CampaignsModule } from './campaigns/campaigns.module';
 import { PlatformConnectModule } from './platform-connect/platform-connect.module';
 import { ShortlistModule } from './shortlist/shortlist.module';
 import { InvitationsModule } from './invitations/invitations.module';
+import { DraftsModule } from './drafts/drafts.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { InvitationsModule } from './invitations/invitations.module';
     PlatformConnectModule,
     ShortlistModule,
     InvitationsModule,
+    DraftsModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

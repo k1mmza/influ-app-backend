@@ -73,6 +73,11 @@ export class ConversationsController {
     return this.conversationsService.markPhaseReady(id, req.user.userId);
   }
 
+  @Get(':id/brief')
+  getBrief(@Param('id') id: string) {
+    return this.conversationsService.getBrief(id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.conversationsService.findOne(id);

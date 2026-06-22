@@ -257,6 +257,9 @@ export class CampaignsService {
       this.prisma.message.deleteMany({
         where: { conversation: { campaignId } },
       }),
+      this.prisma.draft.deleteMany({
+        where: { conversation: { campaignId } },
+      }),
       this.prisma.conversation.deleteMany({ where: { campaignId } }),
       this.prisma.payment.deleteMany({ where: { campaignId } }),
       this.prisma.campaign.delete({ where: { id: campaignId } }),

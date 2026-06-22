@@ -235,7 +235,7 @@ model RateCard {
 model SubmittedContent {
   id              String              @id @default(uuid())
   applicationId   String
-  application     CampaignApplication @relation(fields: [applicationId], references: [id])
+  application     CampaignApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   contentUrl      String
   thumbnailUrl    String?
   contentType     String?             // video, image, etc.
@@ -280,7 +280,7 @@ model Review {
 model PastCollaboration {
   id               String            @id @default(uuid())
   influencerId     String
-  influencer       InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer       InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   campaignId       String?
   campaign         Campaign?         @relation(fields: [campaignId], references: [id])
   brandName        String
@@ -340,7 +340,7 @@ model CampaignApplication {
   campaignId   String
   campaign     Campaign          @relation(fields: [campaignId], references: [id])
   influencerId String
-  influencer   InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer   InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   // status values (bare String — no enum migration):
   //   PENDING   influencer applied, awaiting brand        (influencer-initiated)
   //   INVITED   brand invited, awaiting influencer        (brand-initiated)
@@ -380,9 +380,9 @@ model TrackingResult {
   campaignId         String
   campaign           Campaign          @relation(fields: [campaignId], references: [id])
   influencerId       String
-  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   submittedContentId String
-  submittedContent   SubmittedContent  @relation(fields: [submittedContentId], references: [id])
+  submittedContent   SubmittedContent  @relation(fields: [submittedContentId], references: [id], onDelete: Cascade)
   snapshotPeriod     String?           // DAILY, WEEKLY, etc.
   views              Int               @default(0)
   likes              Int               @default(0)
@@ -411,7 +411,7 @@ model Conversation {
   clientBrandId String
   clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
   influencerId  String
-  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   workPhase            String?
   brandPhaseReady      Boolean  @default(false)
   influencerPhaseReady Boolean  @default(false)
@@ -423,12 +423,33 @@ model Conversation {
 
   // Relationships
   messages        Message[]
+  drafts          Draft[]
+}
+
+// Conversation-scoped content drafts. Created/edited by the influencer; reviewed
+// (approve / request revision) by the brand/agency. See DraftsService.
+model Draft {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  title          String
+  // DRAFT | SUBMITTED | APPROVED | REVISION_REQUESTED (bare String — no enum migration)
+  status         String       @default("DRAFT")
+  notes          String?      @db.Text // influencer's detail/description
+  fileUrl        String?                // uploaded pdf/image via the conversations multer pipeline
+  linkUrl        String?                // external link alternative (Drive/YouTube/Frame.io)
+  contentType    String?                // pdf | image | video | link
+  revisionNote   String?      @db.Text // brand's feedback when requesting changes
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([conversationId])
 }
 
 model Message {
   id             String       @id @default(uuid())
   conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   senderId       String
   sender         User         @relation(fields: [senderId], references: [id])
   content        String       @db.Text
@@ -456,11 +477,15 @@ model Payment {
   clientBrandId  String
   clientBrand    ClientBrand       @relation(fields: [clientBrandId], references: [id])
   influencerId   String
-  influencer     InfluencerProfile @relation(fields: [influencerId], references: [id])
+  influencer     InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   amount         Float
   paymentType    String?
+  // PENDING | AWAITING_CONFIRMATION | PAID (bare String — no enum migration).
+  // PAID is reachable only after the influencer confirms receipt (see PaymentsService).
   status         String            @default("PENDING")
   transactionRef String?
+  proofUrl       String?           // off-platform transfer proof, uploaded by brand/agency
+  confirmedAt    DateTime?         // set when the influencer confirms receipt
   paidAt         DateTime?
   createdAt      DateTime          @default(now())
 }

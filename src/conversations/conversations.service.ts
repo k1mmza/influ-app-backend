@@ -211,6 +211,70 @@ export class ConversationsService {
     };
   }
 
+  /**
+   * Brief phase data for a conversation: the linked Campaign, its CampaignRequirement,
+   * and the most recent SmartPlanBrief (if any). Replaces the hardcoded brief seed on the
+   * frontend. Returns null fields rather than throwing when a requirement/brief is absent.
+   */
+  async getBrief(conversationId: string) {
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: {
+        campaign: {
+          include: {
+            requirements: { take: 1 },
+            smartPlanBriefs: { orderBy: { updatedAt: 'desc' }, take: 1 },
+          },
+        },
+      },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const campaign = conv.campaign;
+    const requirement = campaign?.requirements?.[0] ?? null;
+    const smartPlanBrief = campaign?.smartPlanBriefs?.[0] ?? null;
+
+    return {
+      campaign: campaign
+        ? {
+            id: campaign.id,
+            name: campaign.name,
+            objective: campaign.objective,
+            budget: campaign.budget,
+            paymentType: campaign.paymentType,
+            keyMessage: campaign.keyMessage,
+            deliverables: campaign.deliverables,
+            doAndDont: campaign.doAndDont,
+            applyDeadline: campaign.applyDeadline,
+            submissionDate: campaign.submissionDate,
+          }
+        : null,
+      requirement: requirement
+        ? {
+            minFollowers: requirement.minFollowers,
+            minEngagementRate: requirement.minEngagementRate,
+            minAvgViews: requirement.minAvgViews,
+            platforms: requirement.platforms,
+            locations: requirement.locations,
+            categories: requirement.categories,
+            followerTier: requirement.followerTier,
+            contentType: requirement.contentType,
+          }
+        : null,
+      smartPlanBrief: smartPlanBrief
+        ? {
+            id: smartPlanBrief.id,
+            strategy: smartPlanBrief.strategy,
+            concept: smartPlanBrief.concept,
+            briefBody: smartPlanBrief.briefBody,
+            generatedBrief: smartPlanBrief.generatedBrief,
+            inputMode: smartPlanBrief.inputMode,
+          }
+        : null,
+      briefFileUrl: conv.briefFileUrl ?? null,
+    };
+  }
+
   async markPhaseReady(conversationId: string, userId: string) {
     const [user, conv] = await Promise.all([
       this.prisma.user.findUnique({
