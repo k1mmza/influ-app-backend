@@ -11,7 +11,7 @@ export interface AiChannelAnalysis {
   audienceCountry: string | null;
 }
 
-const VALID_TAGS = [
+export const VALID_TAGS = [
   'Beauty',
   'Fashion',
   'Fitness',
@@ -244,6 +244,85 @@ Respond with valid JSON only. No markdown fences, no explanation.`;
       this.logger.error(
         `AI profile analysis failed for ${platform}/${displayName}: ${err.message}`,
       );
+      return null;
+    }
+  }
+
+  /**
+   * Media-kit text extraction (PDF path). Sends extracted document text to Haiku
+   * and asks for ONLY self-reported profile fields + a separate claimedMetrics
+   * bucket. Returns the raw parsed JSON object (mapping/validation is enforced
+   * downstream by MediaKitImportService) or null on any failure — never throws.
+   *
+   * NOTE: this proposes values only; nothing here writes to the profile.
+   */
+  async analyzeMediaKit(text: string): Promise<Record<string, unknown> | null> {
+    if (!this.client) return null;
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const prompt = `You are extracting fields from an influencer's media kit document. Return ONLY a JSON object with this EXACT shape, no prose, no markdown fences:
+{
+  "bio": string | null,                    // short creator description, max 300 chars
+  "categories": string[],                  // ONLY from: ${VALID_TAGS.join(', ')}
+  "styleTags": string[],                   // ONLY from the same list
+  "keywords": string[],                    // free-form descriptive keywords
+  "hashtags": string[],                    // hashtags, with or without leading #
+  "availabilityStatus": string | null,     // e.g. "Available", "Booked until July"
+  "rateCard": {                            // prices in plain numbers, omit unknown ones
+    "pricePerPost": number | null,
+    "pricePerVideo": number | null,
+    "pricePerStory": number | null,
+    "packagePrice": number | null,
+    "packageDescription": string | null
+  },
+  "claimedMetrics": {                      // numbers the kit CLAIMS — never verified
+    "followers": number | null,
+    "avgViews": number | null,
+    "engagementRate": number | null,
+    "growthRate": number | null
+  }
+}
+Rules:
+- categories and styleTags MUST be chosen only from the allowed list; drop anything not on it.
+- Put follower counts, view counts, engagement/growth rates ONLY in claimedMetrics, NEVER in any other field.
+- If a value is not present in the document, use null (or an empty array). Do not invent values.
+
+Media kit text:
+"""
+${trimmed.substring(0, 12000)}
+"""
+
+Respond with valid JSON only.`;
+
+    try {
+      const message = await this.client.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 600,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      const raw =
+        message.content[0].type === 'text' ? message.content[0].text : '';
+      const parsed = this.parseJsonResponse(raw);
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch (err: any) {
+      this.logger.error(`AI media-kit analysis failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  /** Strip optional ```json fences and parse. Returns null on malformed JSON. */
+  private parseJsonResponse(raw: string): unknown {
+    const json = raw
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+    try {
+      return JSON.parse(json);
+    } catch {
       return null;
     }
   }

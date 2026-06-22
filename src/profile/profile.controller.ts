@@ -13,12 +13,15 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
+import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { ProfileService } from './profile.service';
+import { MediaKitImportService } from './media-kit-import.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
 const UPLOAD_DIR = `${BASE}/rate-cards`;
@@ -27,7 +30,10 @@ const AVATAR_DIR = `${BASE}/avatars`;
 @UseGuards(JwtAuthGuard)
 @Controller('profile')
 export class ProfileController {
-  constructor(private profileService: ProfileService) {}
+  constructor(
+    private profileService: ProfileService,
+    private mediaKitImportService: MediaKitImportService,
+  ) {}
 
   @Get()
   getProfile(@Request() req: any) {
@@ -42,6 +48,36 @@ export class ProfileController {
   @Patch()
   updateProfile(@Request() req: any, @Body() dto: UpdateProfileDto) {
     return this.profileService.updateProfile(req.user.userId, dto);
+  }
+
+  /**
+   * Analyze an uploaded media kit (JSON or text PDF) and return PROPOSED
+   * self-reported fields for review. Saves NOTHING — the influencer confirms,
+   * then the existing PATCH /profile performs the only write.
+   */
+  @Post('media-kit/analyze')
+  @UseGuards(RolesGuard)
+  @Roles('INFLUENCER')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (req, file, cb) => {
+        const allowed = [
+          'application/json',
+          'text/json',
+          'text/plain',
+          'application/pdf',
+          'image/jpeg',
+          'image/png',
+          'image/webp',
+        ];
+        cb(null, allowed.includes(file.mimetype));
+      },
+    }),
+  )
+  analyzeMediaKit(@UploadedFile() file: Express.Multer.File) {
+    return this.mediaKitImportService.analyzeFile(file);
   }
 
   @Post('avatar')
