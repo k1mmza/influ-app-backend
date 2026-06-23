@@ -279,9 +279,16 @@ export class ConversationsService {
     const [user, conv] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
-        include: { influencerProfile: true },
+        include: {
+          influencerProfile: true,
+          brandProfile: true,
+          agencyProfile: true,
+        },
       }),
-      this.prisma.conversation.findUnique({ where: { id: conversationId } }),
+      this.prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: { clientBrand: true },
+      }),
     ]);
     if (!user) throw new NotFoundException('User not found');
     if (!conv) throw new NotFoundException('Conversation not found');
@@ -289,8 +296,17 @@ export class ConversationsService {
     const isInfluencer =
       user.role === 'INFLUENCER' &&
       user.influencerProfile?.id === conv.influencerId;
-    const isBrand = user.role === 'BRAND' || user.role === 'AGENCY';
-    if (!isInfluencer && !isBrand)
+    // Brand/agency may act only on a conversation under their OWN clientBrand —
+    // mirrors the ownership checks in DraftsService/PaymentsService.resolveParticipant.
+    // (Previously this granted access by role alone → cross-tenant IDOR.)
+    const isBrandSide =
+      (user.role === 'BRAND' &&
+        !!user.brandProfile &&
+        conv.clientBrand?.brandProfileId === user.brandProfile.id) ||
+      (user.role === 'AGENCY' &&
+        !!user.agencyProfile &&
+        conv.clientBrand?.agencyId === user.agencyProfile.id);
+    if (!isInfluencer && !isBrandSide)
       throw new ForbiddenException('Not a participant in this conversation');
 
     const updateData: any = isInfluencer

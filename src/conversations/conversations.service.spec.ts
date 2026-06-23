@@ -6,7 +6,7 @@
  * TC-03: throws NotFound when the conversation does not exist
  */
 
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConversationsService } from './conversations.service';
 
 function build(conv: any) {
@@ -16,6 +16,22 @@ function build(conv: any) {
   const gateway: any = {};
   const service = new ConversationsService(prisma, gateway);
   return { service, prisma };
+}
+
+function buildPhaseReady(user: any, conv: any) {
+  const prisma: any = {
+    user: { findUnique: jest.fn().mockResolvedValue(user) },
+    conversation: {
+      findUnique: jest.fn().mockResolvedValue(conv),
+      // echo the patch back onto the conversation so flag/phase reads work
+      update: jest
+        .fn()
+        .mockImplementation(({ data }: any) => ({ ...conv, ...data })),
+    },
+  };
+  const gateway: any = { emitPhaseUpdate: jest.fn() };
+  const service = new ConversationsService(prisma, gateway);
+  return { service, prisma, gateway };
 }
 
 describe('ConversationsService.getBrief', () => {
@@ -102,5 +118,73 @@ describe('ConversationsService.getBrief', () => {
     await expect(service.getBrief('missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+});
+
+/**
+ * TEST PLAN — ConversationsService.markPhaseReady (ownership scoping)
+ * ===================================================================
+ * Regression guard for the cross-tenant IDOR: brand/agency access must be
+ * scoped to the conversation's own clientBrand, not granted by role alone.
+ * TC-04: owning BRAND is allowed -> sets brandPhaseReady, broadcasts
+ * TC-05: non-owning BRAND is rejected (403), no write
+ * TC-06: non-owning AGENCY is rejected (403), no write
+ */
+describe('ConversationsService.markPhaseReady ownership', () => {
+  const conv = {
+    id: 'conv-1',
+    influencerId: 'inf-1',
+    workPhase: 'contact',
+    brandPhaseReady: false,
+    influencerPhaseReady: false,
+    clientBrand: { brandProfileId: 'bp-1', agencyId: null },
+  };
+
+  it('TC-04: owning brand may mark phase-ready', async () => {
+    const owningBrand = {
+      id: 'u-brand',
+      role: 'BRAND',
+      brandProfile: { id: 'bp-1' },
+      agencyProfile: null,
+      influencerProfile: null,
+    };
+    const { service, prisma, gateway } = buildPhaseReady(owningBrand, conv);
+    const res = await service.markPhaseReady('conv-1', 'u-brand');
+
+    expect(res.brandPhaseReady).toBe(true);
+    expect(res.workPhase).toBe('contact'); // one-sided, no advance
+    expect(prisma.conversation.update).toHaveBeenCalledTimes(1);
+    expect(gateway.emitPhaseUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('TC-05: non-owning brand is forbidden (cross-tenant IDOR guard)', async () => {
+    const otherBrand = {
+      id: 'u-other',
+      role: 'BRAND',
+      brandProfile: { id: 'bp-2' }, // does NOT own conv.clientBrand (bp-1)
+      agencyProfile: null,
+      influencerProfile: null,
+    };
+    const { service, prisma, gateway } = buildPhaseReady(otherBrand, conv);
+    await expect(
+      service.markPhaseReady('conv-1', 'u-other'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.conversation.update).not.toHaveBeenCalled();
+    expect(gateway.emitPhaseUpdate).not.toHaveBeenCalled();
+  });
+
+  it('TC-06: non-owning agency is forbidden', async () => {
+    const otherAgency = {
+      id: 'u-ag',
+      role: 'AGENCY',
+      brandProfile: null,
+      agencyProfile: { id: 'ag-2' }, // conv.clientBrand.agencyId is null
+      influencerProfile: null,
+    };
+    const { service, prisma } = buildPhaseReady(otherAgency, conv);
+    await expect(
+      service.markPhaseReady('conv-1', 'u-ag'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.conversation.update).not.toHaveBeenCalled();
   });
 });
