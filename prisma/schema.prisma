@@ -309,6 +309,7 @@ model Campaign {
   paymentDate    DateTime?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  deletedAt      DateTime?
 
   // Relationships
   requirements       CampaignRequirement[]

@@ -149,7 +149,7 @@ export class CampaignsService {
   async getCampaign(userId: string, campaignId: string) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+      where: { id: campaignId, deletedAt: null },
       include: { requirements: true, applications: true, clientBrand: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
@@ -164,7 +164,7 @@ export class CampaignsService {
   ) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+      where: { id: campaignId, deletedAt: null },
       include: { clientBrand: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
@@ -231,7 +231,7 @@ export class CampaignsService {
   async deleteCampaign(userId: string, campaignId: string) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+      where: { id: campaignId, deletedAt: null },
       include: { clientBrand: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
@@ -243,27 +243,10 @@ export class CampaignsService {
       );
     }
 
-    // Delete all related records in dependency order before removing the campaign
-    await this.prisma.$transaction([
-      this.prisma.trackingResult.deleteMany({ where: { campaignId } }),
-      this.prisma.submittedContent.deleteMany({
-        where: { application: { campaignId } },
-      }),
-      this.prisma.campaignApplication.deleteMany({ where: { campaignId } }),
-      this.prisma.campaignRequirement.deleteMany({ where: { campaignId } }),
-      this.prisma.smartPlanBrief.deleteMany({ where: { campaignId } }),
-      this.prisma.review.deleteMany({ where: { campaignId } }),
-      this.prisma.pastCollaboration.deleteMany({ where: { campaignId } }),
-      this.prisma.message.deleteMany({
-        where: { conversation: { campaignId } },
-      }),
-      this.prisma.draft.deleteMany({
-        where: { conversation: { campaignId } },
-      }),
-      this.prisma.conversation.deleteMany({ where: { campaignId } }),
-      this.prisma.payment.deleteMany({ where: { campaignId } }),
-      this.prisma.campaign.delete({ where: { id: campaignId } }),
-    ]);
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { deletedAt: new Date() },
+    });
   }
 
   async applyToCampaign(userId: string, campaignId: string) {
@@ -273,7 +256,7 @@ export class CampaignsService {
     }
 
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+      where: { id: campaignId, deletedAt: null },
       include: { requirements: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
@@ -363,7 +346,7 @@ export class CampaignsService {
   async getApplications(userId: string, campaignId: string) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+      where: { id: campaignId, deletedAt: null },
       include: { clientBrand: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
@@ -406,7 +389,7 @@ export class CampaignsService {
   ) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
+      where: { id: campaignId, deletedAt: null },
       include: { clientBrand: true },
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
@@ -485,7 +468,7 @@ export class CampaignsService {
       });
       if (!clientBrand) return [];
       return this.prisma.campaign.findMany({
-        where: { clientBrandId: clientBrand.id },
+        where: { clientBrandId: clientBrand.id, deletedAt: null },
         include: { clientBrand: true, applications: { select: { id: true } } },
         orderBy: { createdAt: 'desc' },
       });
@@ -493,7 +476,7 @@ export class CampaignsService {
 
     if (user.role === 'AGENCY' && user.agencyProfile) {
       return this.prisma.campaign.findMany({
-        where: { clientBrand: { agencyId: user.agencyProfile.id } },
+        where: { clientBrand: { agencyId: user.agencyProfile.id }, deletedAt: null },
         include: { clientBrand: true, applications: { select: { id: true } } },
         orderBy: { createdAt: 'desc' },
       });
@@ -507,6 +490,7 @@ export class CampaignsService {
       where: {
         visibility: 'PUBLIC',
         status: { in: ['ACTIVE', 'PUBLIC'] },
+        deletedAt: null,
       },
       include: { clientBrand: true },
       orderBy: { createdAt: 'desc' },
