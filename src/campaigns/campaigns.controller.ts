@@ -1,11 +1,14 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Delete,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -30,8 +33,11 @@ export class CampaignsController {
   }
 
   @Get('public')
-  getPublicCampaigns() {
-    return this.campaignsService.getPublicCampaigns();
+  getPublicCampaigns(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('pageSize', new DefaultValuePipe(12), ParseIntPipe) pageSize: number,
+  ) {
+    return this.campaignsService.getPublicCampaigns(page, pageSize);
   }
 
   @Get(':id')

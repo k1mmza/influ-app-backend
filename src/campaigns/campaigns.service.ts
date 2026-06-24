@@ -485,16 +485,22 @@ export class CampaignsService {
     return [];
   }
 
-  async getPublicCampaigns() {
-    return this.prisma.campaign.findMany({
-      where: {
-        visibility: 'PUBLIC',
-        status: { in: ['ACTIVE', 'PUBLIC'] },
-        deletedAt: null,
-      },
-      include: { clientBrand: true },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-    });
+  async getPublicCampaigns(page: number, pageSize: number) {
+    const where = {
+      visibility: 'PUBLIC',
+      status: { in: ['ACTIVE', 'PUBLIC'] },
+      deletedAt: null,
+    };
+    const [total, data] = await this.prisma.$transaction([
+      this.prisma.campaign.count({ where }),
+      this.prisma.campaign.findMany({
+        where,
+        include: { clientBrand: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
   }
 }
