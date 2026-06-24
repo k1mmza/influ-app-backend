@@ -618,6 +618,7 @@ export class InfluencersService {
       id: inf.id,
       handle: mainAccount?.handle ?? null,
       name: inf.user?.name || mainAccount?.displayName || 'Unknown',
+      gender: inf.gender ?? null,
       platforms: sortedAccounts.map((p) => p.platform),
       followers: mainAccount?.followers ?? 0,
       followersByPlatform: sortedAccounts.reduce(

@@ -3,11 +3,13 @@ import {
   IsString,
   IsArray,
   IsNumber,
+  IsEnum,
   ValidateNested,
   Min,
   Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Gender } from '@prisma/client';
 
 class RateCardDto {
   @IsOptional() @IsNumber() pricePerPost?: number;
@@ -19,6 +21,8 @@ class RateCardDto {
 
 export class UpdateInfluencerProfileDto {
   @IsOptional() @IsString() bio?: string;
+
+  @IsOptional() @IsEnum(Gender) gender?: Gender;
 
   @IsOptional()
   @IsArray()

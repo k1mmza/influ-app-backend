@@ -17,6 +17,12 @@ enum UserRole {
   INFLUENCER
 }
 
+enum Gender {
+  male
+  female
+  other
+}
+
 // USER & ACCOUNT MANAGEMENT
 model User {
   id                   String    @id @default(uuid())
@@ -85,6 +91,7 @@ model InfluencerProfile {
   userId              String?  @unique
   user                User?    @relation(fields: [userId], references: [id])
   bio                 String?  @db.Text
+  gender              Gender?
   categories          Json?    // e.g. ["beauty", "lifestyle"]
   styleTags           Json?
   keywords            Json?
