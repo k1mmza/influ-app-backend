@@ -210,6 +210,67 @@ export class YouTubeStrategy implements IPlatformStrategy {
     return { avgViews, engagementRate, spotlightVideo };
   }
 
+  /**
+   * Public per-video stats for a batch of video IDs, keyed by videoId. Used by
+   * the tracking sync over arbitrary published videos, so it authenticates with
+   * the app-level YOUTUBE_API_KEY (no per-user OAuth context) rather than a
+   * Bearer token — same videos.list request shape as fetchRecentVideoStats.
+   *
+   * - Chunks IDs into batches of 50 (videos.list max), one call per chunk.
+   * - A video that returns no item (deleted/private) is simply absent from the
+   *   Map — never throws.
+   * - `shares` is not exposed by this API, so only views/likes/comments are
+   *   returned; a hidden like/comment count defaults to 0.
+   */
+  async fetchVideoStats(
+    videoIds: string[],
+  ): Promise<
+    Map<string, { views: number; likes: number; comments: number }>
+  > {
+    const out = new Map<
+      string,
+      { views: number; likes: number; comments: number }
+    >();
+    if (!videoIds.length) return out;
+
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) {
+      this.logger.warn('YOUTUBE_API_KEY not set — skipping video stats fetch');
+      return out;
+    }
+
+    for (let i = 0; i < videoIds.length; i += 50) {
+      const chunk = videoIds.slice(i, i + 50);
+      const ids = chunk.join(',');
+      const res = await fetch(
+        `${this.YT_BASE}/videos?part=statistics,snippet&id=${encodeURIComponent(ids)}&key=${apiKey}`,
+      );
+      if (!res.ok) {
+        this.logger.warn(
+          `YouTube videos API ${res.status} for ${chunk.length} ids`,
+        );
+        continue;
+      }
+
+      const json = await res.json();
+      const items: any[] = json.items ?? [];
+      for (const v of items) {
+        out.set(v.id, {
+          views: parseInt(v.statistics?.viewCount ?? '0', 10),
+          likes: parseInt(v.statistics?.likeCount ?? '0', 10),
+          comments: parseInt(v.statistics?.commentCount ?? '0', 10),
+        });
+      }
+      if (items.length < chunk.length) {
+        this.logger.debug(
+          `YouTube videos: ${chunk.length - items.length} of ${chunk.length} ids returned no item`,
+        );
+      }
+    }
+
+    return out;
+  }
+
   async fetchAnalyticsData(
     accessToken: string,
   ): Promise<PlatformAnalyticsData> {

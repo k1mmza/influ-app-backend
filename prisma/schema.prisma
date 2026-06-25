@@ -251,6 +251,11 @@ model SubmittedContent {
   submittedAt     DateTime            @default(now())
   reviewedAt      DateTime?
 
+  // Bridge to the live Draft approval flow: an approved Draft produces exactly
+  // one SubmittedContent (null for legacy/seeded rows with no originating draft).
+  draftId         String?             @unique
+  draft           Draft?              @relation(fields: [draftId], references: [id], onDelete: SetNull)
+
   // Relationships
   trackingResults TrackingResult[]
 }
@@ -398,6 +403,11 @@ model TrackingResult {
   shares             Int               @default(0)
   engagementRate     Float             @default(0)
   recordedAt         DateTime          @default(now())
+
+  // Natural key: one snapshot per content per period per day. Sync floors
+  // recordedAt to 00:00:00Z so the key is stable within a day (createdAt is not
+  // tracked here — recordedAt carries the day; real write time is row insert).
+  @@unique([submittedContentId, recordedAt, snapshotPeriod])
 }
 
 model Shortlist {
@@ -450,6 +460,9 @@ model Draft {
   revisionNote   String?      @db.Text // brand's feedback when requesting changes
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+
+  // Set when this draft is approved and bridged into the tracking lineage.
+  submittedContent SubmittedContent?
 
   @@index([conversationId])
 }

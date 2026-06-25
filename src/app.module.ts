@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -28,6 +29,9 @@ import { TrackingModule } from './tracking/tracking.module';
             port: parseInt(process.env.REDIS_PORT || '6379'),
           },
     }),
+    // Enables @Cron handlers (the daily YouTube tracking sync). Registered once
+    // here; the job itself is gated behind YOUTUBE_SYNC_ENABLED (default OFF).
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     DashboardModule,

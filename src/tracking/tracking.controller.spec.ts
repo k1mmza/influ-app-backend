@@ -10,6 +10,7 @@ const svc = {
   getSummary: jest.fn(),
   getDetail: jest.fn(),
   recordResult: jest.fn(),
+  syncYoutubeStats: jest.fn(),
 };
 
 async function buildApp(jwtMock: object) {
@@ -91,6 +92,39 @@ describe('TrackingController', () => {
         .post('/tracking/camp-1/results')
         .send({ submittedContentId: 'content-1', views: 1.5 })
         .expect(400);
+    });
+  });
+
+  // Temporary ops trigger — gated by the ADMIN_EMAILS env allowlist (no ADMIN
+  // role exists). AUTH_PASS injects email 'test@example.com'.
+  describe('POST /tracking/sync/youtube', () => {
+    afterEach(() => {
+      delete process.env.ADMIN_EMAILS;
+    });
+
+    it('201 runs the sync when the caller is on the allowlist', async () => {
+      process.env.ADMIN_EMAILS = 'someone@x.com, test@example.com';
+      svc.syncYoutubeStats.mockResolvedValueOnce({ written: 2, skipped: 1 });
+      const res = await request(app.getHttpServer())
+        .post('/tracking/sync/youtube')
+        .expect(201);
+      expect(res.body).toEqual({ written: 2, skipped: 1 });
+      expect(svc.syncYoutubeStats).toHaveBeenCalledTimes(1);
+    });
+
+    it('403 when the caller is not on the allowlist', async () => {
+      process.env.ADMIN_EMAILS = 'someone-else@x.com';
+      await request(app.getHttpServer())
+        .post('/tracking/sync/youtube')
+        .expect(403);
+      expect(svc.syncYoutubeStats).not.toHaveBeenCalled();
+    });
+
+    it('403 (deny-all) when ADMIN_EMAILS is unset', async () => {
+      await request(app.getHttpServer())
+        .post('/tracking/sync/youtube')
+        .expect(403);
+      expect(svc.syncYoutubeStats).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from '../conversations/chat.gateway';
@@ -19,6 +21,8 @@ type Participant = {
 
 @Injectable()
 export class DraftsService {
+  private readonly logger = new Logger(DraftsService.name);
+
   constructor(
     private prisma: PrismaService,
     private chatGateway: ChatGateway,
@@ -180,18 +184,93 @@ export class DraftsService {
         'A revision note is required when requesting changes',
       );
 
-    const draft = await this.prisma.draft.update({
-      where: { id: draftId },
-      data: {
-        status: dto.status,
-        revisionNote:
-          dto.status === 'REVISION_REQUESTED'
-            ? (dto.revisionNote ?? null)
-            : null,
-      },
+    // Status flip + tracking bridge commit atomically. A mid-bridge failure
+    // rolls the approval back rather than leaving an APPROVED draft with no
+    // SubmittedContent — the crash-safety the two-write sequence couldn't give.
+    const draft = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.draft.update({
+        where: { id: draftId },
+        data: {
+          status: dto.status,
+          revisionNote:
+            dto.status === 'REVISION_REQUESTED'
+              ? (dto.revisionNote ?? null)
+              : null,
+        },
+      });
+
+      // Bridge approved work into the tracking lineage. An approved Draft
+      // becomes a SubmittedContent so it can carry TrackingResult snapshots.
+      // Metrics still originate from seed/sync — this only restores the link.
+      if (dto.status === 'APPROVED') {
+        await this.bridgeApprovedDraft(tx, conversationId, updated);
+      }
+      return updated;
     });
+
     this.chatGateway.emitDraftsUpdate(conversationId);
     return draft;
+  }
+
+  /**
+   * Upsert a SubmittedContent row for an approved draft, keyed on draftId so
+   * re-approval never duplicates. Runs on the caller's transaction client so it
+   * commits atomically with the Draft status flip. Skips when there is nothing
+   * publishable (no link/file — a normal case); a missing application is a
+   * data-integrity signal and is logged before skipping.
+   */
+  private async bridgeApprovedDraft(
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+    draft: {
+      id: string;
+      linkUrl: string | null;
+      fileUrl: string | null;
+      contentType: string | null;
+    },
+  ) {
+    const contentUrl = draft.linkUrl ?? draft.fileUrl;
+    if (!contentUrl) return;
+
+    const conv = await tx.conversation.findUnique({
+      where: { id: conversationId },
+      select: { campaignId: true, influencerId: true },
+    });
+    if (!conv) return;
+
+    const application = await tx.campaignApplication.findFirst({
+      where: { campaignId: conv.campaignId, influencerId: conv.influencerId },
+      orderBy: { appliedAt: 'desc' },
+      select: { id: true },
+    });
+    if (!application) {
+      // A conversation exists for this campaign/influencer but no application
+      // links them — should be impossible (conversations require an accepted
+      // application). Surface it rather than silently dropping the bridge.
+      this.logger.warn(
+        `Approved draft ${draft.id} (conversation ${conversationId}) has no CampaignApplication ` +
+          `for campaign=${conv.campaignId} influencer=${conv.influencerId}; SubmittedContent not bridged`,
+      );
+      return;
+    }
+
+    await tx.submittedContent.upsert({
+      where: { draftId: draft.id },
+      create: {
+        applicationId: application.id,
+        draftId: draft.id,
+        contentUrl,
+        contentType: draft.contentType,
+        reviewStatus: 'APPROVED',
+        reviewedAt: new Date(),
+      },
+      update: {
+        contentUrl,
+        contentType: draft.contentType,
+        reviewStatus: 'APPROVED',
+        reviewedAt: new Date(),
+      },
+    });
   }
 
   async saveUpload(

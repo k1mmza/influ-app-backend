@@ -13,11 +13,21 @@
  * TC-05: BRAND can review (approve) a draft
  * TC-06: INFLUENCER cannot review a draft (Forbidden)
  * TC-07: Requesting revision without a note throws BadRequest
- * TC-08: A non-participant is rejected (Forbidden)
- * TC-09: Both roles can list drafts
+ *
+ * Tracking bridge (approved Draft -> SubmittedContent)
+ * ----------------------------------------------------
+ * TC-08: Approving a draft with a link bridges into SubmittedContent (in a tx)
+ * TC-09: Requesting a revision does not bridge
+ * TC-10: Approving with no link/file does not bridge
+ * TC-11: A bridge failure rolls the approval back (error propagates from the tx)
+ * TC-12: Missing application logs a data-integrity warning and skips the bridge
  */
 
-import { ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { DraftsService } from './drafts.service';
 
 const INF_USER = {
@@ -53,20 +63,40 @@ const DRAFT = {
   conversationId: 'conv-1',
   title: 'Hook v1',
   status: 'DRAFT',
+  linkUrl: null,
+  fileUrl: null,
+  contentType: null,
+};
+// Approved draft carrying a published URL — the bridgeable case.
+const DRAFT_WITH_LINK = {
+  ...DRAFT,
+  linkUrl: 'https://tiktok.com/@x/video/1',
+  contentType: 'video',
 };
 
-function build(user: any, conv: any = CONV) {
+function build(user: any, conv: any = CONV, draft: any = DRAFT) {
   const prisma: any = {
     user: { findUnique: jest.fn().mockResolvedValue(user) },
     conversation: { findUnique: jest.fn().mockResolvedValue(conv) },
     draft: {
       findMany: jest.fn().mockResolvedValue([DRAFT]),
-      findUnique: jest.fn().mockResolvedValue(DRAFT),
+      findUnique: jest.fn().mockResolvedValue(draft),
       create: jest.fn().mockResolvedValue(DRAFT),
-      update: jest.fn().mockImplementation(({ data }) => ({ ...DRAFT, ...data })),
+      update: jest.fn().mockImplementation(({ data }) => ({ ...draft, ...data })),
       delete: jest.fn().mockResolvedValue(DRAFT),
     },
+    campaignApplication: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'app-1' }),
+    },
+    submittedContent: {
+      upsert: jest.fn().mockResolvedValue({ id: 'sc-1' }),
+    },
   };
+  // Interactive transaction: run the callback with the same mock as the tx
+  // client, so assertions on prisma.* observe the in-transaction writes.
+  prisma.$transaction = jest
+    .fn()
+    .mockImplementation((cb: any) => cb(prisma));
   const gateway: any = { emitDraftsUpdate: jest.fn() };
   const service = new DraftsService(prisma, gateway);
   return { service, prisma, gateway };
@@ -130,6 +160,68 @@ describe('DraftsService permissions', () => {
         status: 'REVISION_REQUESTED',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('TC-08: approving a draft with a link bridges into SubmittedContent (inside a tx)', async () => {
+    const { service, prisma } = build(BRAND_USER, CONV, DRAFT_WITH_LINK);
+    await service.review('u-brand', 'conv-1', 'draft-1', { status: 'APPROVED' });
+    // The status flip + bridge must share one interactive transaction.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.campaignApplication.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      }),
+    );
+    expect(prisma.submittedContent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { draftId: 'draft-1' },
+        create: expect.objectContaining({
+          applicationId: 'app-1',
+          draftId: 'draft-1',
+          contentUrl: 'https://tiktok.com/@x/video/1',
+          contentType: 'video',
+          reviewStatus: 'APPROVED',
+        }),
+      }),
+    );
+  });
+
+  it('TC-09: requesting a revision does not bridge', async () => {
+    const { service, prisma } = build(BRAND_USER, CONV, DRAFT_WITH_LINK);
+    await service.review('u-brand', 'conv-1', 'draft-1', {
+      status: 'REVISION_REQUESTED',
+      revisionNote: 'tighten the hook',
+    });
+    expect(prisma.submittedContent.upsert).not.toHaveBeenCalled();
+  });
+
+  it('TC-10: approving a draft with no link or file does not bridge', async () => {
+    const { service, prisma } = build(BRAND_USER); // default DRAFT has no link/file
+    await service.review('u-brand', 'conv-1', 'draft-1', { status: 'APPROVED' });
+    expect(prisma.submittedContent.upsert).not.toHaveBeenCalled();
+  });
+
+  it('TC-11: a bridge failure rolls back the approval (error propagates from the tx)', async () => {
+    const { service, prisma } = build(BRAND_USER, CONV, DRAFT_WITH_LINK);
+    prisma.submittedContent.upsert.mockRejectedValueOnce(new Error('db down'));
+    // Because the upsert runs inside $transaction, its rejection bubbles out of
+    // review() — the caller sees an error rather than a silently half-applied
+    // approval. (Real Postgres rolls the Draft.update back on this path.)
+    await expect(
+      service.review('u-brand', 'conv-1', 'draft-1', { status: 'APPROVED' }),
+    ).rejects.toThrow('db down');
+  });
+
+  it('TC-12: missing application logs a data-integrity warning and skips the bridge', async () => {
+    const { service, prisma } = build(BRAND_USER, CONV, DRAFT_WITH_LINK);
+    prisma.campaignApplication.findFirst.mockResolvedValueOnce(null);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    await service.review('u-brand', 'conv-1', 'draft-1', { status: 'APPROVED' });
+    expect(prisma.submittedContent.upsert).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('no CampaignApplication'),
+    );
+    warn.mockRestore();
   });
 
   it('TC-08: a non-participant is rejected', async () => {
