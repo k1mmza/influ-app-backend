@@ -4,10 +4,12 @@ import * as bcrypt from 'bcrypt';
 const prisma = new PrismaClient();
 
 async function main() {
-  // Clean up any previous seed user with this email
-  const existing = await prisma.user.findUnique({ where: { email: 'demo.influencer@influapp.test' } });
-  if (existing) {
-    await prisma.user.delete({ where: { id: existing.id } });
+  // Clean up any previous seed users with these emails
+  for (const email of ['demo.influencer@influapp.test', 'demo.brand@influapp.test']) {
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      await prisma.user.delete({ where: { id: existing.id } });
+    }
   }
 
   const hashed = await bcrypt.hash('Test1234!', 10);
@@ -127,6 +129,96 @@ async function main() {
 
   console.log(`✓ Created influencer: ${user.name} (${user.email})`);
   console.log(`  Platforms: YouTube 284k · TikTok 510k · Instagram 196k`);
+
+  const influencerProfile = await prisma.influencerProfile.findUniqueOrThrow({
+    where: { userId: user.id },
+  });
+
+  // ── Brand + campaign + tracking data (so /tracking has real rows) ──────────
+  const hashedBrand = await bcrypt.hash('Test1234!', 10);
+  const brand = await prisma.user.create({
+    data: {
+      name: 'Lumen Skincare',
+      email: 'demo.brand@influapp.test',
+      password: hashedBrand,
+      role: 'BRAND',
+      isRoleSelected: true,
+      brandProfile: {
+        create: { companyName: 'Lumen Skincare', websiteUrl: 'https://lumen.example' },
+      },
+    },
+    include: { brandProfile: true },
+  });
+
+  const clientBrand = await prisma.clientBrand.create({
+    data: {
+      brandProfileId: brand.brandProfile!.id,
+      brandName: 'Lumen Skincare',
+      brandEmail: brand.email,
+      isRegistered: true,
+    },
+  });
+
+  const campaign = await prisma.campaign.create({
+    data: {
+      clientBrandId: clientBrand.id,
+      name: 'Summer Skincare Launch',
+      objective: 'Awareness',
+      budget: 240000,
+      budgetSpent: 98000,
+      visibility: 'PUBLIC',
+      status: 'ACTIVE',
+    },
+  });
+
+  const application = await prisma.campaignApplication.create({
+    data: { campaignId: campaign.id, influencerId: influencerProfile.id, status: 'ACCEPTED' },
+  });
+
+  // Two pieces of submitted content; the TikTok one gets two snapshots over time
+  // so the latest-snapshot-wins dedup path is exercised on the page.
+  const tiktokContent = await prisma.submittedContent.create({
+    data: {
+      applicationId: application.id,
+      contentUrl: 'https://tiktok.com/@aria.thorne/video/mock1',
+      contentType: 'video',
+      reviewStatus: 'APPROVED',
+    },
+  });
+  const igContent = await prisma.submittedContent.create({
+    data: {
+      applicationId: application.id,
+      contentUrl: 'https://instagram.com/p/mock2',
+      contentType: 'image',
+      reviewStatus: 'APPROVED',
+    },
+  });
+
+  await prisma.trackingResult.createMany({
+    data: [
+      // older snapshot for the TikTok post — should be hidden by the newer one
+      {
+        campaignId: campaign.id, influencerId: influencerProfile.id, submittedContentId: tiktokContent.id,
+        snapshotPeriod: 'WEEKLY', views: 96000, likes: 7100, comments: 320, shares: 180,
+        engagementRate: 4.2, recordedAt: new Date('2026-06-10'),
+      },
+      // latest snapshot for the TikTok post
+      {
+        campaignId: campaign.id, influencerId: influencerProfile.id, submittedContentId: tiktokContent.id,
+        snapshotPeriod: 'WEEKLY', views: 182000, likes: 12400, comments: 640, shares: 312,
+        engagementRate: 5.2, recordedAt: new Date('2026-06-20'),
+      },
+      // single snapshot for the IG post
+      {
+        campaignId: campaign.id, influencerId: influencerProfile.id, submittedContentId: igContent.id,
+        snapshotPeriod: 'WEEKLY', views: 72000, likes: 4800, comments: 180, shares: 95,
+        engagementRate: 4.5, recordedAt: new Date('2026-06-20'),
+      },
+    ],
+  });
+
+  console.log(`✓ Created brand: ${brand.name} (${brand.email})`);
+  console.log(`  Campaign "${campaign.name}" with 2 tracked posts (3 snapshots)`);
 }
 
 main()

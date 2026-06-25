@@ -16,6 +16,7 @@ import { ShortlistModule } from './shortlist/shortlist.module';
 import { InvitationsModule } from './invitations/invitations.module';
 import { DraftsModule } from './drafts/drafts.module';
 import { PaymentsModule } from './payments/payments.module';
+import { TrackingModule } from './tracking/tracking.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { PaymentsModule } from './payments/payments.module';
     InvitationsModule,
     DraftsModule,
     PaymentsModule,
+    TrackingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
