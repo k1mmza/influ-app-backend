@@ -16,7 +16,8 @@ async function buildApp(jwtMock: object) {
     controllers: [AuthController],
     providers: [{ provide: AuthService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
     .compile();
   return initApp(module);
 }
@@ -24,18 +25,27 @@ async function buildApp(jwtMock: object) {
 describe('AuthController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
   describe('POST /auth/register', () => {
     it('201 on valid body', async () => {
-      svc.register.mockResolvedValueOnce({ access_token: 'tok', user: { id: '1' } });
+      svc.register.mockResolvedValueOnce({
+        access_token: 'tok',
+        user: { id: '1' },
+      });
       await request(app.getHttpServer())
         .post('/auth/register')
         .send({ email: 'a@a.com', password: 'password123', name: 'Test User' })
         .expect(201);
-      expect(svc.register).toHaveBeenCalledWith({ email: 'a@a.com', password: 'password123', name: 'Test User' });
+      expect(svc.register).toHaveBeenCalledWith({
+        email: 'a@a.com',
+        password: 'password123',
+        name: 'Test User',
+      });
     });
 
     it('400 on missing email', async () => {
@@ -98,13 +108,21 @@ describe('AuthController', () => {
         .post('/auth/select-role')
         .send({ role: 'BRAND' })
         .expect(201);
-      expect(svc.selectRole).toHaveBeenCalledWith(TEST_USER_ID, { role: 'BRAND' });
+      expect(svc.selectRole).toHaveBeenCalledWith(TEST_USER_ID, {
+        role: 'BRAND',
+      });
     });
 
     it('201 accepts INFLUENCER and AGENCY roles', async () => {
       svc.selectRole.mockResolvedValue({ user: {} });
-      await request(app.getHttpServer()).post('/auth/select-role').send({ role: 'INFLUENCER' }).expect(201);
-      await request(app.getHttpServer()).post('/auth/select-role').send({ role: 'AGENCY' }).expect(201);
+      await request(app.getHttpServer())
+        .post('/auth/select-role')
+        .send({ role: 'INFLUENCER' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post('/auth/select-role')
+        .send({ role: 'AGENCY' })
+        .expect(201);
     });
 
     it('400 on invalid role value', async () => {

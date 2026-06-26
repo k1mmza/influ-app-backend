@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import pdfParse from 'pdf-parse';
-import { AiAnalysisService, VALID_TAGS } from '../influencers/ai-analysis.service';
+import {
+  AiAnalysisService,
+  VALID_TAGS,
+} from '../influencers/ai-analysis.service';
 
 /**
  * Self-reported fields the import is ALLOWED to propose. These mirror
@@ -104,9 +107,7 @@ export class MediaKitImportService {
     const mime = file.mimetype || '';
 
     const isJson =
-      mime.includes('json') ||
-      mime === 'text/plain' ||
-      name.endsWith('.json');
+      mime.includes('json') || mime === 'text/plain' || name.endsWith('.json');
     const isPdf = mime === 'application/pdf' || name.endsWith('.pdf');
     const isImage = mime.startsWith('image/');
 
@@ -133,10 +134,11 @@ export class MediaKitImportService {
       ]);
     }
     // Tolerate a top-level { mediaKit: {...} } envelope.
-    const obj =
-      isRecord(raw) && isRecord(raw.mediaKit) ? raw.mediaKit : raw;
+    const obj = isRecord(raw) && isRecord(raw.mediaKit) ? raw.mediaKit : raw;
     if (!isRecord(obj)) {
-      return this.empty('json', ['The JSON did not contain any fields to import.']);
+      return this.empty('json', [
+        'The JSON did not contain any fields to import.',
+      ]);
     }
     const { proposed, claimedMetrics } = this.mapRaw(obj);
     const warnings: string[] = [];
@@ -201,7 +203,13 @@ export class MediaKitImportService {
 
     // categories / styleTags — constrained to the predefined VALID_TAGS list
     const categories = normalizeTags(
-      pickArrayish(lower, ['categories', 'category', 'niche', 'niches', 'verticals']),
+      pickArrayish(lower, [
+        'categories',
+        'category',
+        'niche',
+        'niches',
+        'verticals',
+      ]),
     );
     if (categories.length) proposed.categories = categories;
 
@@ -211,7 +219,10 @@ export class MediaKitImportService {
     if (styleTags.length) proposed.styleTags = styleTags;
 
     // keywords (free-form)
-    const keywords = stringArray(pickArrayish(lower, ['keywords'])).slice(0, 20);
+    const keywords = stringArray(pickArrayish(lower, ['keywords'])).slice(
+      0,
+      20,
+    );
     if (keywords.length) proposed.keywords = keywords;
 
     // hashtags (free-form, normalize leading #)
@@ -341,7 +352,8 @@ function toNumber(v: unknown): number | undefined {
       const n = parseFloat(m[1]);
       if (!Number.isFinite(n)) return undefined;
       const unit = (m[2] || '').toLowerCase();
-      const mult = unit === 'k' ? 1e3 : unit === 'm' ? 1e6 : unit === 'b' ? 1e9 : 1;
+      const mult =
+        unit === 'k' ? 1e3 : unit === 'm' ? 1e6 : unit === 'b' ? 1e9 : 1;
       return n * mult;
     }
   }
@@ -371,7 +383,9 @@ function pickArrayish(obj: Record<string, unknown>, keys: string[]): unknown {
 
 function stringArray(v: unknown): string[] {
   if (Array.isArray(v)) {
-    return v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim());
+    return v
+      .filter((x) => typeof x === 'string' && x.trim())
+      .map((x) => x.trim());
   }
   if (typeof v === 'string') {
     return v

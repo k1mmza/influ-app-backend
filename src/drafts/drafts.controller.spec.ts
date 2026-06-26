@@ -5,7 +5,14 @@ import { DraftsController } from './drafts.controller';
 import { DraftsService } from './drafts.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { AUTH_PASS, AUTH_FAIL, ROLE_PASS, ROLE_FAIL, initApp, TEST_USER_ID } from '../test-utils';
+import {
+  AUTH_PASS,
+  AUTH_FAIL,
+  ROLE_PASS,
+  ROLE_FAIL,
+  initApp,
+  TEST_USER_ID,
+} from '../test-utils';
 
 const svc = {
   list: jest.fn(),
@@ -21,8 +28,10 @@ async function buildApp(jwtMock: object, rolesMock: object) {
     controllers: [DraftsController],
     providers: [{ provide: DraftsService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
-    .overrideGuard(RolesGuard).useValue(rolesMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
+    .overrideGuard(RolesGuard)
+    .useValue(rolesMock)
     .compile();
   return initApp(module);
 }
@@ -30,7 +39,9 @@ async function buildApp(jwtMock: object, rolesMock: object) {
 describe('DraftsController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS, ROLE_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS, ROLE_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
@@ -54,7 +65,11 @@ describe('DraftsController', () => {
         .post(base)
         .send({ title: 'My Draft' })
         .expect(201);
-      expect(svc.create).toHaveBeenCalledWith(TEST_USER_ID, CONV, expect.objectContaining({ title: 'My Draft' }));
+      expect(svc.create).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        CONV,
+        expect.objectContaining({ title: 'My Draft' }),
+      );
     });
 
     it('400 on missing title', async () => {
@@ -79,7 +94,11 @@ describe('DraftsController', () => {
       svc.create.mockResolvedValueOnce({ id: DRAFT });
       await request(app.getHttpServer())
         .post(base)
-        .send({ title: 'Link Draft', contentType: 'link', linkUrl: 'https://example.com' })
+        .send({
+          title: 'Link Draft',
+          contentType: 'link',
+          linkUrl: 'https://example.com',
+        })
         .expect(201);
     });
   });
@@ -110,7 +129,10 @@ describe('DraftsController', () => {
 
     it('404 when draft not found', async () => {
       svc.update.mockRejectedValueOnce(new NotFoundException());
-      await request(app.getHttpServer()).patch(`${base}/nonexistent`).send({ title: 'X' }).expect(404);
+      await request(app.getHttpServer())
+        .patch(`${base}/nonexistent`)
+        .send({ title: 'X' })
+        .expect(404);
     });
   });
 
@@ -123,7 +145,9 @@ describe('DraftsController', () => {
 
     it('404 when draft not found', async () => {
       svc.remove.mockRejectedValueOnce(new NotFoundException());
-      await request(app.getHttpServer()).delete(`${base}/nonexistent`).expect(404);
+      await request(app.getHttpServer())
+        .delete(`${base}/nonexistent`)
+        .expect(404);
     });
   });
 
@@ -137,15 +161,24 @@ describe('DraftsController', () => {
     });
 
     it('200 requests revision', async () => {
-      svc.review.mockResolvedValueOnce({ id: DRAFT, status: 'REVISION_REQUESTED' });
+      svc.review.mockResolvedValueOnce({
+        id: DRAFT,
+        status: 'REVISION_REQUESTED',
+      });
       await request(app.getHttpServer())
         .patch(`${base}/${DRAFT}/review`)
-        .send({ status: 'REVISION_REQUESTED', revisionNote: 'Please fix the caption.' })
+        .send({
+          status: 'REVISION_REQUESTED',
+          revisionNote: 'Please fix the caption.',
+        })
         .expect(200);
     });
 
     it('400 on missing status', async () => {
-      await request(app.getHttpServer()).patch(`${base}/${DRAFT}/review`).send({}).expect(400);
+      await request(app.getHttpServer())
+        .patch(`${base}/${DRAFT}/review`)
+        .send({})
+        .expect(400);
     });
 
     it('400 on invalid status value', async () => {
@@ -158,10 +191,15 @@ describe('DraftsController', () => {
 
   describe(`POST ${base}/:draftId/upload`, () => {
     it('201 uploads file for draft', async () => {
-      svc.saveUpload.mockResolvedValueOnce({ url: '/uploads/conversations/test.jpg' });
+      svc.saveUpload.mockResolvedValueOnce({
+        url: '/uploads/conversations/test.jpg',
+      });
       await request(app.getHttpServer())
         .post(`${base}/${DRAFT}/upload`)
-        .attach('file', Buffer.from('fake-image'), { filename: 'test.jpg', contentType: 'image/jpeg' })
+        .attach('file', Buffer.from('fake-image'), {
+          filename: 'test.jpg',
+          contentType: 'image/jpeg',
+        })
         .expect(201);
       expect(svc.saveUpload).toHaveBeenCalled();
     });
@@ -176,7 +214,10 @@ describe('DraftsController', () => {
 
     it('403 POST draft with wrong role', async () => {
       const noRoleApp = await buildApp(AUTH_PASS, ROLE_FAIL);
-      await request(noRoleApp.getHttpServer()).post(base).send({ title: 'X' }).expect(403);
+      await request(noRoleApp.getHttpServer())
+        .post(base)
+        .send({ title: 'X' })
+        .expect(403);
       await noRoleApp.close();
     });
   });

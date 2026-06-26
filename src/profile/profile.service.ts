@@ -51,6 +51,7 @@ export class ProfileService {
             engagementRate: pa.engagementRate,
             syncedAt: pa.syncedAt,
             hasTokens: !!(pa as any).refreshToken,
+            needsReauth: pa.needsReauth,
           }))
         : [];
 

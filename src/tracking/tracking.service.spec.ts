@@ -20,26 +20,54 @@
  * TC-08: a TikTok content is skipped (no fetch, no write)
  * TC-09: a zero-view video yields ER 0 (no divide-by-zero)
  * TC-10: a video absent from the fetch (deleted/private) counts as skipped
+ *
+ * TikTok sync (syncTiktokStats) — parseVideoUrl real, per-influencer token fetch mocked
+ * --------------------------------------------------------------------------------------
+ * TC-11: a TikTok content for a connected account writes a snapshot (real shares, ER incl. shares)
+ * TC-12: an influencer with NO connected TikTok is skipped (no write, nothing to flag)
+ * TC-13: a failed token refresh skips the influencer AND sets needsReauth (skip-and-flag)
+ * TC-14: a TikTokAuthError (missing video.list scope) skips AND sets needsReauth
+ * TC-15: a video absent from the fetch (deleted/private/not-owned) counts as skipped
  */
 
 import { NotFoundException } from '@nestjs/common';
 import { TrackingService } from './tracking.service';
+import { TikTokAuthError } from '../platform-connect/strategies/tiktok.strategy';
+
+// valid 19-digit TikTok snowflake id (matches parseVideoUrl's ^\d{15,}$)
+const TT_ID = '7234567890123456789';
+const TT_URL = `https://www.tiktok.com/@creator/video/${TT_ID}`;
+const future = new Date(Date.now() + 60 * 60 * 1000); // token not near expiry
 
 function makeService(
   trackingRows: any[],
   campaigns: any[],
   submittedContent: any = undefined,
-  opts: { candidates?: any[]; youtube?: any } = {},
+  opts: {
+    candidates?: any[];
+    youtube?: any;
+    tiktok?: any;
+    platformAccount?: any;
+  } = {},
 ) {
   const prisma: any = {
     trackingResult: {
       findMany: jest.fn().mockResolvedValue(trackingRows),
-      create: jest.fn().mockImplementation(({ data }) => ({ id: 'tr-new', ...data })),
-      upsert: jest.fn().mockImplementation(({ create }) => ({ id: 'tr-up', ...create })),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }) => ({ id: 'tr-new', ...data })),
+      upsert: jest
+        .fn()
+        .mockImplementation(({ create }) => ({ id: 'tr-up', ...create })),
     },
     submittedContent: {
       findUnique: jest.fn().mockResolvedValue(submittedContent),
       findMany: jest.fn().mockResolvedValue(opts.candidates ?? []),
+    },
+    platformAccount: {
+      // default: no connected account (overridable per test)
+      findFirst: jest.fn().mockResolvedValue(opts.platformAccount ?? null),
+      update: jest.fn().mockResolvedValue({}),
     },
   };
   const campaignsService: any = {
@@ -49,27 +77,66 @@ function makeService(
   const youtube: any = opts.youtube ?? {
     fetchVideoStats: jest.fn().mockResolvedValue(new Map()),
   };
-  const service = new TrackingService(prisma, campaignsService, youtube);
-  return Object.assign(service, { __prisma: prisma, __youtube: youtube });
+  const tiktok: any = opts.tiktok ?? {
+    fetchVideoStats: jest.fn().mockResolvedValue(new Map()),
+    refreshAccessToken: jest.fn(),
+  };
+  const service = new TrackingService(
+    prisma,
+    campaignsService,
+    youtube,
+    tiktok,
+  );
+  return Object.assign(service, {
+    __prisma: prisma,
+    __youtube: youtube,
+    __tiktok: tiktok,
+  });
 }
 
 // two snapshots for content c1 (newer first), one for c2
 const detailRows = [
   {
-    id: 'tr-2', submittedContentId: 'c1', recordedAt: new Date('2026-02-01'),
-    views: 200, likes: 0, comments: 0, shares: 0, engagementRate: 5,
-    influencer: { growthRate: 8, user: { name: 'Maya' }, platformAccounts: [{ platform: 'tiktok', isPrimary: true }] },
+    id: 'tr-2',
+    submittedContentId: 'c1',
+    recordedAt: new Date('2026-02-01'),
+    views: 200,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    engagementRate: 5,
+    influencer: {
+      growthRate: 8,
+      user: { name: 'Maya' },
+      platformAccounts: [{ platform: 'tiktok', isPrimary: true }],
+    },
     submittedContent: { contentType: 'video', contentUrl: 'http://x' },
   },
   {
-    id: 'tr-1', submittedContentId: 'c1', recordedAt: new Date('2026-01-01'),
-    views: 100, likes: 0, comments: 0, shares: 0, engagementRate: 3,
-    influencer: { growthRate: 8, user: { name: 'Maya' }, platformAccounts: [{ platform: 'tiktok', isPrimary: true }] },
+    id: 'tr-1',
+    submittedContentId: 'c1',
+    recordedAt: new Date('2026-01-01'),
+    views: 100,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    engagementRate: 3,
+    influencer: {
+      growthRate: 8,
+      user: { name: 'Maya' },
+      platformAccounts: [{ platform: 'tiktok', isPrimary: true }],
+    },
     submittedContent: { contentType: 'video', contentUrl: 'http://x' },
   },
   {
-    id: 'tr-3', submittedContentId: 'c2', recordedAt: new Date('2026-02-01'),
-    views: 50, likes: 0, comments: 0, shares: 0, engagementRate: 7,
+    id: 'tr-3',
+    submittedContentId: 'c2',
+    recordedAt: new Date('2026-02-01'),
+    views: 50,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    engagementRate: 7,
     influencer: { growthRate: 2, user: { name: 'Nina' }, platformAccounts: [] },
     submittedContent: { contentType: 'image', contentUrl: null },
   },
@@ -91,10 +158,15 @@ describe('TrackingService', () => {
 
   it('TC-02: getSummary aggregates latest snapshots only', async () => {
     const summaryRows = detailRows.map((r) => ({
-      campaignId: 'camp-1', submittedContentId: r.submittedContentId,
-      influencerId: r.influencer.user.name, views: r.views, engagementRate: r.engagementRate,
+      campaignId: 'camp-1',
+      submittedContentId: r.submittedContentId,
+      influencerId: r.influencer.user.name,
+      views: r.views,
+      engagementRate: r.engagementRate,
     }));
-    const svc = makeService(summaryRows, [{ id: 'camp-1', name: 'Glow', status: 'ACTIVE' }]);
+    const svc = makeService(summaryRows, [
+      { id: 'camp-1', name: 'Glow', status: 'ACTIVE' },
+    ]);
     const [summary] = await svc.getSummary('u-1');
 
     expect(summary.totalViews).toBe(250); // 200 (latest c1) + 50 (c2), NOT 100
@@ -199,9 +271,11 @@ describe('TrackingService', () => {
       },
     ];
     const youtube = {
-      fetchVideoStats: jest.fn().mockResolvedValue(
-        new Map([['dQw4w9WgXcQ', { views: 1000, likes: 40, comments: 10 }]]),
-      ),
+      fetchVideoStats: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([['dQw4w9WgXcQ', { views: 1000, likes: 40, comments: 10 }]]),
+        ),
     };
     const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
       candidates,
@@ -265,9 +339,11 @@ describe('TrackingService', () => {
       },
     ];
     const youtube = {
-      fetchVideoStats: jest.fn().mockResolvedValue(
-        new Map([['dQw4w9WgXcQ', { views: 0, likes: 0, comments: 0 }]]),
-      ),
+      fetchVideoStats: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([['dQw4w9WgXcQ', { views: 0, likes: 0, comments: 0 }]]),
+        ),
     };
     const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
       candidates,
@@ -304,5 +380,187 @@ describe('TrackingService', () => {
 
     expect(rec).not.toHaveBeenCalled();
     expect(res).toEqual({ written: 0, skipped: 1 });
+  });
+
+  it('TC-11: a TikTok content for a connected account writes a snapshot with real shares', async () => {
+    const candidates = [
+      {
+        id: 'sc-tt',
+        contentUrl: TT_URL,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+    ];
+    const tiktok = {
+      fetchVideoStats: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([
+            [TT_ID, { views: 1000, likes: 30, comments: 10, shares: 10 }],
+          ]),
+        ),
+      refreshAccessToken: jest.fn(),
+    };
+    const account = {
+      id: 'pa-1',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      tokenExpiry: future,
+      needsReauth: false,
+    };
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      tiktok,
+      platformAccount: account,
+    });
+    const rec = jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    const res = await svc.syncTiktokStats();
+
+    expect(tiktok.refreshAccessToken).not.toHaveBeenCalled(); // token not expired
+    expect(tiktok.fetchVideoStats).toHaveBeenCalledWith('at', [TT_ID]);
+    expect(rec).toHaveBeenCalledWith(
+      expect.objectContaining({
+        submittedContentId: 'sc-tt',
+        views: 1000,
+        likes: 30,
+        comments: 10,
+        shares: 10, // real, unlike YouTube
+        engagementRate: 5, // (30 + 10 + 10) / 1000 * 100 = 5.0 (incl. shares)
+        snapshotPeriod: 'DAILY',
+      }),
+    );
+    expect(res).toEqual({ written: 1, skipped: 0, reauth: 0 });
+  });
+
+  it('TC-12: an influencer with no connected TikTok is skipped, nothing to flag', async () => {
+    const candidates = [
+      {
+        id: 'sc-tt',
+        contentUrl: TT_URL,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+    ];
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      platformAccount: null, // no connected account
+    });
+    const rec = jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    const res = await svc.syncTiktokStats();
+
+    expect(rec).not.toHaveBeenCalled();
+    expect(svc.__prisma.platformAccount.update).not.toHaveBeenCalled(); // no account to flag
+    expect(res).toEqual({ written: 0, skipped: 1, reauth: 0 });
+  });
+
+  it('TC-13: a failed token refresh skips the influencer and sets needsReauth', async () => {
+    const candidates = [
+      {
+        id: 'sc-tt',
+        contentUrl: TT_URL,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+    ];
+    const tiktok = {
+      fetchVideoStats: jest.fn(),
+      refreshAccessToken: jest
+        .fn()
+        .mockRejectedValue(new Error('invalid_grant')),
+    };
+    const account = {
+      id: 'pa-1',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      tokenExpiry: new Date(Date.now() - 1000), // expired -> forces refresh
+      needsReauth: false,
+    };
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      tiktok,
+      platformAccount: account,
+    });
+    const rec = jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    const res = await svc.syncTiktokStats();
+
+    expect(tiktok.fetchVideoStats).not.toHaveBeenCalled(); // never reached fetch
+    expect(rec).not.toHaveBeenCalled();
+    expect(svc.__prisma.platformAccount.update).toHaveBeenCalledWith({
+      where: { id: 'pa-1' },
+      data: { needsReauth: true },
+    });
+    expect(res).toEqual({ written: 0, skipped: 1, reauth: 1 });
+  });
+
+  it('TC-14: a TikTokAuthError (missing video.list scope) skips and sets needsReauth', async () => {
+    const candidates = [
+      {
+        id: 'sc-tt',
+        contentUrl: TT_URL,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+    ];
+    const tiktok = {
+      fetchVideoStats: jest
+        .fn()
+        .mockRejectedValue(new TikTokAuthError('scope_not_authorized')),
+      refreshAccessToken: jest.fn(),
+    };
+    const account = {
+      id: 'pa-1',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      tokenExpiry: future,
+      needsReauth: false,
+    };
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      tiktok,
+      platformAccount: account,
+    });
+    const rec = jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    const res = await svc.syncTiktokStats();
+
+    expect(rec).not.toHaveBeenCalled();
+    expect(svc.__prisma.platformAccount.update).toHaveBeenCalledWith({
+      where: { id: 'pa-1' },
+      data: { needsReauth: true },
+    });
+    expect(res).toEqual({ written: 0, skipped: 1, reauth: 1 });
+  });
+
+  it('TC-15: a TikTok video absent from the fetch counts as skipped (no flag)', async () => {
+    const candidates = [
+      {
+        id: 'sc-tt',
+        contentUrl: TT_URL,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+    ];
+    const tiktok = {
+      fetchVideoStats: jest.fn().mockResolvedValue(new Map()), // id requested, none owned/returned
+      refreshAccessToken: jest.fn(),
+    };
+    const account = {
+      id: 'pa-1',
+      accessToken: 'at',
+      refreshToken: 'rt',
+      tokenExpiry: future,
+      needsReauth: false,
+    };
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      tiktok,
+      platformAccount: account,
+    });
+    const rec = jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    const res = await svc.syncTiktokStats();
+
+    expect(rec).not.toHaveBeenCalled();
+    // reached the API fine — this is per-video absence, not an auth problem
+    expect(svc.__prisma.platformAccount.update).not.toHaveBeenCalled();
+    expect(res).toEqual({ written: 0, skipped: 1, reauth: 0 });
   });
 });

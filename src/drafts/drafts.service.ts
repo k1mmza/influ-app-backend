@@ -12,6 +12,8 @@ import { ChatGateway } from '../conversations/chat.gateway';
 import { CreateDraftDto } from './dto/create-draft.dto';
 import { UpdateDraftDto } from './dto/update-draft.dto';
 import { ReviewDraftDto } from './dto/review-draft.dto';
+import { parseVideoUrl } from '../sync/video-url';
+import { resolveTikTokShortLink } from '../sync/resolve-short-url';
 
 type Participant = {
   role: string;
@@ -208,8 +210,53 @@ export class DraftsService {
       return updated;
     });
 
+    // Best-effort, POST-COMMIT: if the approved content is a TikTok short link,
+    // resolve it to its canonical /@user/video/<id> so the daily sync can track
+    // it. Deliberately OUTSIDE the transaction — the network call must never
+    // hold the tx open or be able to roll the approval back. On any failure the
+    // row keeps the short-link URL (still `needsResolution`), so the daily sync
+    // skips it and it stays visibly untracked rather than silently dropped.
+    if (draft.status === 'APPROVED') {
+      await this.resolveShortLink(draftId, draft.linkUrl ?? draft.fileUrl);
+    }
+
     this.chatGateway.emitDraftsUpdate(conversationId);
     return draft;
+  }
+
+  /**
+   * Resolve a TikTok short link on an already-bridged SubmittedContent and
+   * persist the canonical URL. Only fires for the `needsResolution` case (a
+   * TikTok short link); every other URL is a no-op early return, so normal
+   * approvals incur no network call. Fully isolated: a failure here is logged
+   * and swallowed — it can never affect the committed Draft approval.
+   */
+  private async resolveShortLink(
+    draftId: string,
+    contentUrl: string | null,
+  ): Promise<void> {
+    try {
+      if (!contentUrl) return;
+      const parsed = parseVideoUrl(contentUrl);
+      // Only a TikTok short link needs resolving (the videoId-null variant).
+      if (!parsed || parsed.platform !== 'tiktok' || parsed.videoId !== null) {
+        return;
+      }
+
+      const canonical = await resolveTikTokShortLink(contentUrl);
+      if (!canonical) return; // failed/timed out — leave short URL untracked
+
+      // updateMany (not update) so a skipped bridge — no SubmittedContent row —
+      // is a 0-row no-op, never a throw.
+      await this.prisma.submittedContent.updateMany({
+        where: { draftId },
+        data: { contentUrl: canonical },
+      });
+    } catch (e: any) {
+      this.logger.warn(
+        `TikTok short-link resolve failed for draft ${draftId}: ${e.message}`,
+      );
+    }
   }
 
   /**

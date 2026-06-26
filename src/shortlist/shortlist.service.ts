@@ -342,7 +342,10 @@ export class ShortlistService {
       {},
     );
     const avgViewDurationByPlatform = sortedAccounts.reduce(
-      (acc: any, p: any) => ({ ...acc, [p.platform]: p.avgViewDuration ?? null }),
+      (acc: any, p: any) => ({
+        ...acc,
+        [p.platform]: p.avgViewDuration ?? null,
+      }),
       {},
     );
     const avgViewPctByPlatform = sortedAccounts.reduce(
@@ -350,26 +353,32 @@ export class ShortlistService {
       {},
     );
     const subscribersGainedByPlatform = sortedAccounts.reduce(
-      (acc: any, p: any) => ({ ...acc, [p.platform]: p.subscribersGained ?? null }),
+      (acc: any, p: any) => ({
+        ...acc,
+        [p.platform]: p.subscribersGained ?? null,
+      }),
       {},
     );
     const topCountriesByPlatform = sortedAccounts.reduce(
       (acc: any, p: any) => ({ ...acc, [p.platform]: p.topCountries ?? null }),
       {},
     );
-    const audienceInsightsByPlatform = sortedAccounts.reduce((acc: any, p: any) => {
-      const insight = p.audienceInsights?.[0] ?? null;
-      return {
-        ...acc,
-        [p.platform]: insight
-          ? {
-              malePct: insight.malePct ?? null,
-              femalePct: insight.femalePct ?? null,
-              ageDistribution: insight.ageDistribution ?? null,
-            }
-          : null,
-      };
-    }, {});
+    const audienceInsightsByPlatform = sortedAccounts.reduce(
+      (acc: any, p: any) => {
+        const insight = p.audienceInsights?.[0] ?? null;
+        return {
+          ...acc,
+          [p.platform]: insight
+            ? {
+                malePct: insight.malePct ?? null,
+                femalePct: insight.femalePct ?? null,
+                ageDistribution: insight.ageDistribution ?? null,
+              }
+            : null,
+        };
+      },
+      {},
+    );
 
     const mainInsight = mainAccount?.audienceInsights?.[0] ?? null;
 

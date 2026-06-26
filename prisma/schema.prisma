@@ -206,6 +206,11 @@ model PlatformAccount {
   refreshToken      String?   @db.Text
   tokenExpiry       DateTime?
 
+  // Set true when the tracking sync finds this connection unusable (revoked/
+  // expired refresh token, or missing the video.list scope on TikTok). The UI
+  // reads this to prompt the influencer to reconnect. Cleared on a good sync.
+  needsReauth       Boolean   @default(false)
+
   // YouTube Analytics fields (populated via yt-analytics.readonly)
   watchTimeMins     Float?
   avgViewDuration   Float?

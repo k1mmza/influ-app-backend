@@ -476,7 +476,10 @@ export class CampaignsService {
 
     if (user.role === 'AGENCY' && user.agencyProfile) {
       return this.prisma.campaign.findMany({
-        where: { clientBrand: { agencyId: user.agencyProfile.id }, deletedAt: null },
+        where: {
+          clientBrand: { agencyId: user.agencyProfile.id },
+          deletedAt: null,
+        },
         include: { clientBrand: true, applications: { select: { id: true } } },
         orderBy: { createdAt: 'desc' },
       });
@@ -501,6 +504,12 @@ export class CampaignsService {
         take: pageSize,
       }),
     ]);
-    return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
+    return {
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    };
   }
 }

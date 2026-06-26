@@ -1,16 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { YouTubeStrategy } from '../platform-connect/strategies/youtube.strategy';
+import {
+  TikTokStrategy,
+  TikTokAuthError,
+} from '../platform-connect/strategies/tiktok.strategy';
 import { parseVideoUrl } from '../sync/video-url';
 import { RecordResultDto } from './dto/record-result.dto';
 
 @Injectable()
 export class TrackingService {
+  private readonly logger = new Logger(TrackingService.name);
+
   constructor(
     private prisma: PrismaService,
     private campaigns: CampaignsService,
     private youtube: YouTubeStrategy,
+    private tiktok: TikTokStrategy,
   ) {}
 
   // TrackingResult is snapshot-based (many rows per content over time). For the
@@ -118,10 +125,14 @@ export class TrackingService {
 
     const content = await this.prisma.submittedContent.findUnique({
       where: { id: dto.submittedContentId },
-      include: { application: { select: { campaignId: true, influencerId: true } } },
+      include: {
+        application: { select: { campaignId: true, influencerId: true } },
+      },
     });
     if (!content || content.application.campaignId !== campaignId) {
-      throw new NotFoundException('Submitted content not found for this campaign');
+      throw new NotFoundException(
+        'Submitted content not found for this campaign',
+      );
     }
 
     // influencerId is taken from the content's application — never trusted from the client
@@ -224,7 +235,10 @@ export class TrackingService {
     let skipped = 0;
     for (const c of candidates) {
       const parsed = parseVideoUrl(c.contentUrl);
-      if (!parsed) {
+      // parseVideoUrl now also resolves TikTok; this sync is YouTube-only, so
+      // anything that isn't a YouTube id is not ours — skip it (TikTok content
+      // is handled by syncTiktokStats).
+      if (!parsed || parsed.platform !== 'youtube') {
         skipped++;
         continue;
       }
@@ -275,5 +289,197 @@ export class TrackingService {
     }
 
     return { written, skipped };
+  }
+
+  /** Mark a connected account as needing re-consent (revoked token or missing
+   *  video.list scope) so the UI can prompt the influencer to reconnect. Best
+   *  effort — a failure here must never break the sync loop. */
+  private async flagReauth(platformAccountId: string): Promise<void> {
+    try {
+      await this.prisma.platformAccount.update({
+        where: { id: platformAccountId },
+        data: { needsReauth: true },
+      });
+    } catch (e: any) {
+      this.logger.warn(
+        `Could not set needsReauth on account ${platformAccountId}: ${e.message}`,
+      );
+    }
+  }
+
+  /**
+   * Daily TikTok tracking sync. Mirrors syncYoutubeStats, but TikTok has no
+   * public stats-by-id endpoint: /v2/video/query/ only returns videos owned by
+   * the user whose OAuth token we hold. So candidates are GROUPED BY INFLUENCER
+   * and fetched with that influencer's token (refreshing it first if expired).
+   *
+   * Degrades exactly like the YouTube pipeline — it NEVER throws. Per-influencer
+   * failures (no connected TikTok, revoked/expired refresh token, missing
+   * video.list scope) skip that influencer's content and set needsReauth on
+   * their PlatformAccount so the UI can prompt re-consent. Writes go only
+   * through recordSnapshot (untouched). Returns counts plus how many influencers
+   * were flagged for re-auth.
+   */
+  async syncTiktokStats(): Promise<{
+    written: number;
+    skipped: number;
+    reauth: number;
+  }> {
+    const candidates = await this.prisma.submittedContent.findMany({
+      where: { application: { campaign: { status: 'ACTIVE' } } },
+      select: {
+        id: true,
+        contentUrl: true,
+        application: { select: { campaignId: true, influencerId: true } },
+      },
+    });
+
+    // Group resolvable TikTok videos by influencer (each needs that
+    // influencer's token). Non-TikTok URLs, and TikTok short links we can't
+    // resolve purely (needsResolution), count as skipped — same as YouTube.
+    const byInfluencer = new Map<
+      string,
+      { videoId: string; content: (typeof candidates)[number] }[]
+    >();
+    let skipped = 0;
+    for (const c of candidates) {
+      const parsed = parseVideoUrl(c.contentUrl);
+      if (!parsed || parsed.platform !== 'tiktok' || parsed.videoId === null) {
+        skipped++;
+        continue;
+      }
+      const influencerId = c.application.influencerId;
+      const list = byInfluencer.get(influencerId) ?? [];
+      list.push({ videoId: parsed.videoId, content: c });
+      byInfluencer.set(influencerId, list);
+    }
+
+    if (byInfluencer.size === 0) return { written: 0, skipped, reauth: 0 };
+
+    // Floor to today 00:00:00Z so the daily upsert key is stable within the day.
+    const now = new Date();
+    const recordedAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+
+    let written = 0;
+    let reauth = 0;
+
+    for (const [influencerId, items] of byInfluencer) {
+      const account = await this.prisma.platformAccount.findFirst({
+        where: { influencerId, platform: 'tiktok' },
+      });
+
+      // No connected TikTok (or no usable tokens) — can't fetch. Skip this
+      // influencer's content; flag the account if one exists so the UI prompts
+      // a (re)connect. Never throw.
+      if (!account || !account.accessToken || !account.refreshToken) {
+        skipped += items.length;
+        if (account) {
+          await this.flagReauth(account.id);
+          reauth++;
+        }
+        continue;
+      }
+
+      // Refresh an expired/near-expiry token, mirroring PlatformConnectService.
+      // A failed refresh means the refresh token is revoked/expired -> re-auth.
+      let accessToken = account.accessToken;
+      const fiveMin = new Date(Date.now() + 5 * 60 * 1000);
+      if (!account.tokenExpiry || account.tokenExpiry < fiveMin) {
+        try {
+          const refreshed = await this.tiktok.refreshAccessToken(
+            account.refreshToken,
+          );
+          accessToken = refreshed.accessToken;
+          await this.prisma.platformAccount.update({
+            where: { id: account.id },
+            data: {
+              accessToken: refreshed.accessToken,
+              tokenExpiry: refreshed.expiry,
+              needsReauth: false,
+            },
+          });
+        } catch (e: any) {
+          this.logger.warn(
+            `TikTok token refresh failed for account ${account.id}: ${e.message}`,
+          );
+          skipped += items.length;
+          await this.flagReauth(account.id);
+          reauth++;
+          continue;
+        }
+      }
+
+      // Fetch this influencer's video stats. A hard auth/scope failure
+      // (TikTokAuthError) means the token can't read videos -> re-auth. Any
+      // other unexpected error also degrades to skip-and-flag, never throw.
+      let stats: Map<
+        string,
+        { views: number; likes: number; comments: number; shares: number }
+      >;
+      try {
+        stats = await this.tiktok.fetchVideoStats(
+          accessToken,
+          items.map((i) => i.videoId),
+        );
+      } catch (e: any) {
+        const why =
+          e instanceof TikTokAuthError ? 'auth/scope' : `error: ${e.message}`;
+        this.logger.warn(
+          `TikTok video.query failed for account ${account.id} (${why})`,
+        );
+        skipped += items.length;
+        await this.flagReauth(account.id);
+        reauth++;
+        continue;
+      }
+
+      // Reached the API successfully — clear a stale needsReauth flag if set.
+      if (account.needsReauth) {
+        await this.prisma.platformAccount.update({
+          where: { id: account.id },
+          data: { needsReauth: false },
+        });
+      }
+
+      for (const { videoId, content } of items) {
+        const stat = stats.get(videoId);
+        if (!stat) {
+          // Deleted/private/not-owned — absent from the fetch. Skip, don't throw.
+          skipped++;
+          continue;
+        }
+
+        // ER stored as a percent (seed + page render `{engagementRate}%`).
+        // TikTok exposes shares, so engagement includes them (matches the
+        // TikTok discovery adapter's convention); shares is a real value here.
+        const engagementRate =
+          stat.views > 0
+            ? parseFloat(
+                (
+                  ((stat.likes + stat.comments + stat.shares) / stat.views) *
+                  100
+                ).toFixed(2),
+              )
+            : 0;
+
+        await this.recordSnapshot({
+          campaignId: content.application.campaignId,
+          influencerId: content.application.influencerId,
+          submittedContentId: content.id,
+          views: stat.views,
+          likes: stat.likes,
+          comments: stat.comments,
+          shares: stat.shares,
+          engagementRate,
+          snapshotPeriod: 'DAILY',
+          recordedAt,
+        });
+        written++;
+      }
+    }
+
+    return { written, skipped, reauth };
   }
 }

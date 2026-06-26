@@ -33,7 +33,7 @@ describe('YouTubeStrategy.fetchVideoStats', () => {
 
   beforeEach(() => {
     fetchMock = jest.fn();
-    global.fetch = fetchMock as unknown as typeof fetch;
+    global.fetch = fetchMock;
   });
 
   it('TC-01: maps a 2-item batch, defaulting a hidden like count to 0', async () => {
@@ -41,7 +41,11 @@ describe('YouTubeStrategy.fetchVideoStats', () => {
       ytResponse([
         {
           id: 'vid-a',
-          statistics: { viewCount: '1000', likeCount: '120', commentCount: '8' },
+          statistics: {
+            viewCount: '1000',
+            likeCount: '120',
+            commentCount: '8',
+          },
         },
         // likeCount hidden by the creator — must default to 0, not throw.
         { id: 'vid-b', statistics: { viewCount: '50', commentCount: '2' } },
@@ -51,7 +55,11 @@ describe('YouTubeStrategy.fetchVideoStats', () => {
     const stats = await strategy.fetchVideoStats(['vid-a', 'vid-b']);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(stats.get('vid-a')).toEqual({ views: 1000, likes: 120, comments: 8 });
+    expect(stats.get('vid-a')).toEqual({
+      views: 1000,
+      likes: 120,
+      comments: 8,
+    });
     expect(stats.get('vid-b')).toEqual({ views: 50, likes: 0, comments: 2 });
     // sanity: request used videos.list with part=statistics,snippet
     const url = fetchMock.mock.calls[0][0] as string;
@@ -73,7 +81,10 @@ describe('YouTubeStrategy.fetchVideoStats', () => {
     // Asked for two ids; the API only returns one (the other is deleted/private).
     fetchMock.mockResolvedValueOnce(
       ytResponse([
-        { id: 'live', statistics: { viewCount: '7', likeCount: '1', commentCount: '0' } },
+        {
+          id: 'live',
+          statistics: { viewCount: '7', likeCount: '1', commentCount: '0' },
+        },
       ]),
     );
 

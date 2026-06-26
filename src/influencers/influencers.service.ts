@@ -179,11 +179,12 @@ export class InfluencersService {
       if (g === 'female') genderCond = { femalePct: { gte: 55 } };
       else if (g === 'male') genderCond = { malePct: { gte: 55 } };
       // "Mixed" = balanced split (neither gender clearly dominates)
-      else if (g === 'mixed')
-        genderCond = { femalePct: { gte: 40, lte: 60 } };
+      else if (g === 'mixed') genderCond = { femalePct: { gte: 40, lte: 60 } };
       if (genderCond) {
         andConditions.push({
-          platformAccounts: { some: { audienceInsights: { some: genderCond } } },
+          platformAccounts: {
+            some: { audienceInsights: { some: genderCond } },
+          },
         });
       }
     }

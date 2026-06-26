@@ -16,7 +16,8 @@ async function buildApp(jwtMock: object) {
     controllers: [PlatformConnectController],
     providers: [{ provide: PlatformConnectService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
     .compile();
   return initApp(module);
 }
@@ -24,7 +25,9 @@ async function buildApp(jwtMock: object) {
 describe('PlatformConnectController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
@@ -60,11 +63,16 @@ describe('PlatformConnectController', () => {
     it('200 handles successful OAuth callback with HTML redirect', async () => {
       svc.handleCallback.mockResolvedValueOnce(undefined);
       const res = await request(app.getHttpServer())
-        .get('/auth/platform/connect/callback?code=authcode&state=some.state.val')
+        .get(
+          '/auth/platform/connect/callback?code=authcode&state=some.state.val',
+        )
         .expect(200);
       expect(res.text).toContain('window.location.replace');
       expect(res.text).toContain('platform_connect=success');
-      expect(svc.handleCallback).toHaveBeenCalledWith('authcode', 'some.state.val');
+      expect(svc.handleCallback).toHaveBeenCalledWith(
+        'authcode',
+        'some.state.val',
+      );
     });
 
     it('200 handles OAuth error with error redirect', async () => {
@@ -83,9 +91,13 @@ describe('PlatformConnectController', () => {
     });
 
     it('200 handles service error with error redirect', async () => {
-      svc.handleCallback.mockRejectedValueOnce(new Error('token exchange failed'));
+      svc.handleCallback.mockRejectedValueOnce(
+        new Error('token exchange failed'),
+      );
       const res = await request(app.getHttpServer())
-        .get('/auth/platform/connect/callback?code=badcode&state=some.state.val')
+        .get(
+          '/auth/platform/connect/callback?code=badcode&state=some.state.val',
+        )
         .expect(200);
       expect(res.text).toContain('platform_connect=error');
     });
@@ -99,7 +111,10 @@ describe('PlatformConnectController', () => {
         .send({ platform: 'tiktok' })
         .expect(200);
       expect(res.body.message).toContain('tiktok');
-      expect(svc.disconnectPlatform).toHaveBeenCalledWith(TEST_USER_ID, 'tiktok');
+      expect(svc.disconnectPlatform).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'tiktok',
+      );
     });
 
     it('400 on missing platform', async () => {

@@ -5,7 +5,14 @@ import { InvitationsController } from './invitations.controller';
 import { InvitationsService } from './invitations.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { AUTH_PASS, AUTH_FAIL, ROLE_PASS, ROLE_FAIL, initApp, TEST_USER_ID } from '../test-utils';
+import {
+  AUTH_PASS,
+  AUTH_FAIL,
+  ROLE_PASS,
+  ROLE_FAIL,
+  initApp,
+  TEST_USER_ID,
+} from '../test-utils';
 
 const svc = {
   invite: jest.fn(),
@@ -19,8 +26,10 @@ async function buildApp(jwtMock: object, rolesMock: object) {
     controllers: [InvitationsController],
     providers: [{ provide: InvitationsService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
-    .overrideGuard(RolesGuard).useValue(rolesMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
+    .overrideGuard(RolesGuard)
+    .useValue(rolesMock)
     .compile();
   return initApp(module);
 }
@@ -28,7 +37,9 @@ async function buildApp(jwtMock: object, rolesMock: object) {
 describe('InvitationsController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS, ROLE_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS, ROLE_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
@@ -60,8 +71,12 @@ describe('InvitationsController', () => {
 
   describe('GET /invitations', () => {
     it('200 returns invitations for influencer', async () => {
-      svc.getInvitations.mockResolvedValueOnce([{ id: 'app-1', status: 'INVITED' }]);
-      const res = await request(app.getHttpServer()).get('/invitations').expect(200);
+      svc.getInvitations.mockResolvedValueOnce([
+        { id: 'app-1', status: 'INVITED' },
+      ]);
+      const res = await request(app.getHttpServer())
+        .get('/invitations')
+        .expect(200);
       expect(res.body).toHaveLength(1);
       expect(svc.getInvitations).toHaveBeenCalledWith(TEST_USER_ID);
     });
@@ -70,26 +85,34 @@ describe('InvitationsController', () => {
   describe('POST /invitations/:id/accept', () => {
     it('201 accepts invitation', async () => {
       svc.accept.mockResolvedValueOnce({ id: 'app-1', status: 'ACCEPTED' });
-      await request(app.getHttpServer()).post('/invitations/app-1/accept').expect(201);
+      await request(app.getHttpServer())
+        .post('/invitations/app-1/accept')
+        .expect(201);
       expect(svc.accept).toHaveBeenCalledWith(TEST_USER_ID, 'app-1');
     });
 
     it('404 when invitation not found', async () => {
       svc.accept.mockRejectedValueOnce(new NotFoundException());
-      await request(app.getHttpServer()).post('/invitations/nonexistent/accept').expect(404);
+      await request(app.getHttpServer())
+        .post('/invitations/nonexistent/accept')
+        .expect(404);
     });
   });
 
   describe('POST /invitations/:id/decline', () => {
     it('201 declines invitation', async () => {
       svc.decline.mockResolvedValueOnce({ id: 'app-1', status: 'DECLINED' });
-      await request(app.getHttpServer()).post('/invitations/app-1/decline').expect(201);
+      await request(app.getHttpServer())
+        .post('/invitations/app-1/decline')
+        .expect(201);
       expect(svc.decline).toHaveBeenCalledWith(TEST_USER_ID, 'app-1');
     });
 
     it('404 when invitation not found', async () => {
       svc.decline.mockRejectedValueOnce(new NotFoundException());
-      await request(app.getHttpServer()).post('/invitations/nonexistent/decline').expect(404);
+      await request(app.getHttpServer())
+        .post('/invitations/nonexistent/decline')
+        .expect(404);
     });
   });
 

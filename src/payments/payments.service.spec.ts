@@ -62,15 +62,21 @@ function build(user: any, existingPayment: any = payment()) {
     payment: {
       findMany: jest.fn().mockResolvedValue([existingPayment]),
       findUnique: jest.fn().mockResolvedValue(existingPayment),
-      create: jest.fn().mockImplementation(({ data }) => ({ ...payment(), ...data })),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }) => ({ ...payment(), ...data })),
       update: jest
         .fn()
         .mockImplementation(({ data }) => ({ ...existingPayment, ...data })),
     },
     wallet: {
-      upsert: jest.fn().mockResolvedValue({ userId: user.id, totalEarned: 9000 }),
+      upsert: jest
+        .fn()
+        .mockResolvedValue({ userId: user.id, totalEarned: 9000 }),
     },
-    $transaction: jest.fn().mockImplementation(async (arr: any[]) => Promise.all(arr)),
+    $transaction: jest
+      .fn()
+      .mockImplementation(async (arr: any[]) => Promise.all(arr)),
   };
   const gateway: any = { emitPaymentsUpdate: jest.fn() };
   const service = new PaymentsService(prisma, gateway);

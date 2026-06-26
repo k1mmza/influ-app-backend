@@ -18,7 +18,8 @@ async function buildApp(jwtMock: object) {
     controllers: [TrackingController],
     providers: [{ provide: TrackingService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
     .compile();
   return initApp(module);
 }
@@ -26,14 +27,21 @@ async function buildApp(jwtMock: object) {
 describe('TrackingController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
   describe('GET /tracking', () => {
     it('200 returns tracking summary for user', async () => {
-      svc.getSummary.mockResolvedValueOnce({ totalCampaigns: 3, totalResults: 10 });
-      const res = await request(app.getHttpServer()).get('/tracking').expect(200);
+      svc.getSummary.mockResolvedValueOnce({
+        totalCampaigns: 3,
+        totalResults: 10,
+      });
+      const res = await request(app.getHttpServer())
+        .get('/tracking')
+        .expect(200);
       expect(res.body.totalCampaigns).toBe(3);
       expect(svc.getSummary).toHaveBeenCalledWith(TEST_USER_ID);
     });
@@ -47,15 +55,22 @@ describe('TrackingController', () => {
 
   describe('GET /tracking/:campaignId', () => {
     it('200 returns tracking detail for campaign', async () => {
-      svc.getDetail.mockResolvedValueOnce({ campaignId: 'camp-1', results: [] });
-      const res = await request(app.getHttpServer()).get('/tracking/camp-1').expect(200);
+      svc.getDetail.mockResolvedValueOnce({
+        campaignId: 'camp-1',
+        results: [],
+      });
+      const res = await request(app.getHttpServer())
+        .get('/tracking/camp-1')
+        .expect(200);
       expect(res.body.campaignId).toBe('camp-1');
       expect(svc.getDetail).toHaveBeenCalledWith(TEST_USER_ID, 'camp-1');
     });
 
     it('404 when campaign not found', async () => {
       svc.getDetail.mockRejectedValueOnce(new NotFoundException());
-      await request(app.getHttpServer()).get('/tracking/nonexistent').expect(404);
+      await request(app.getHttpServer())
+        .get('/tracking/nonexistent')
+        .expect(404);
     });
   });
 

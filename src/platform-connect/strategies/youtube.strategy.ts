@@ -224,9 +224,7 @@ export class YouTubeStrategy implements IPlatformStrategy {
    */
   async fetchVideoStats(
     videoIds: string[],
-  ): Promise<
-    Map<string, { views: number; likes: number; comments: number }>
-  > {
+  ): Promise<Map<string, { views: number; likes: number; comments: number }>> {
     const out = new Map<
       string,
       { views: number; likes: number; comments: number }

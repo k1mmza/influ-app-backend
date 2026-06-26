@@ -4,7 +4,14 @@ import { ShortlistController } from './shortlist.controller';
 import { ShortlistService } from './shortlist.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { AUTH_PASS, AUTH_FAIL, ROLE_PASS, ROLE_FAIL, initApp, TEST_USER_ID } from '../test-utils';
+import {
+  AUTH_PASS,
+  AUTH_FAIL,
+  ROLE_PASS,
+  ROLE_FAIL,
+  initApp,
+  TEST_USER_ID,
+} from '../test-utils';
 
 const svc = {
   getShortlist: jest.fn(),
@@ -17,8 +24,10 @@ async function buildApp(jwtMock: object, rolesMock: object) {
     controllers: [ShortlistController],
     providers: [{ provide: ShortlistService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
-    .overrideGuard(RolesGuard).useValue(rolesMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
+    .overrideGuard(RolesGuard)
+    .useValue(rolesMock)
     .compile();
   return initApp(module);
 }
@@ -26,21 +35,27 @@ async function buildApp(jwtMock: object, rolesMock: object) {
 describe('ShortlistController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS, ROLE_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS, ROLE_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
   describe('GET /shortlist', () => {
     it('200 returns shortlisted influencers', async () => {
       svc.getShortlist.mockResolvedValueOnce([{ influencerId: 'inf-1' }]);
-      const res = await request(app.getHttpServer()).get('/shortlist').expect(200);
+      const res = await request(app.getHttpServer())
+        .get('/shortlist')
+        .expect(200);
       expect(res.body).toHaveLength(1);
       expect(svc.getShortlist).toHaveBeenCalledWith(TEST_USER_ID);
     });
 
     it('200 returns empty list when shortlist is empty', async () => {
       svc.getShortlist.mockResolvedValueOnce([]);
-      const res = await request(app.getHttpServer()).get('/shortlist').expect(200);
+      const res = await request(app.getHttpServer())
+        .get('/shortlist')
+        .expect(200);
       expect(res.body).toEqual([]);
     });
   });
@@ -76,7 +91,9 @@ describe('ShortlistController', () => {
 
     it('403 POST /shortlist/:id with wrong role', async () => {
       const noRoleApp = await buildApp(AUTH_PASS, ROLE_FAIL);
-      await request(noRoleApp.getHttpServer()).post('/shortlist/inf-1').expect(403);
+      await request(noRoleApp.getHttpServer())
+        .post('/shortlist/inf-1')
+        .expect(403);
       await noRoleApp.close();
     });
   });

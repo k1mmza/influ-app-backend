@@ -86,11 +86,7 @@ export class PaymentsService {
     });
   }
 
-  async create(
-    userId: string,
-    conversationId: string,
-    dto: CreatePaymentDto,
-  ) {
+  async create(userId: string, conversationId: string, dto: CreatePaymentDto) {
     const { isBrandSide, conv } = await this.resolveParticipant(
       userId,
       conversationId,
@@ -115,10 +111,7 @@ export class PaymentsService {
     return payment;
   }
 
-  private async getScopedPayment(
-    conv: Participant['conv'],
-    paymentId: string,
-  ) {
+  private async getScopedPayment(conv: Participant['conv'], paymentId: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
     });

@@ -361,7 +361,10 @@ describe('CampaignsService.updateApplicationStatus', () => {
       status: 'REJECTED',
     });
 
-    const serviceRej = new CampaignsService(prismaRej, makeConvService(prismaRej));
+    const serviceRej = new CampaignsService(
+      prismaRej,
+      makeConvService(prismaRej),
+    );
     const rejResult = await serviceRej.updateApplicationStatus(
       'user-brand-1',
       'campaign-1',
@@ -393,7 +396,10 @@ describe('CampaignsService.updateApplicationStatus', () => {
       return cb(tx);
     });
 
-    const serviceAcc = new CampaignsService(prismaAcc, makeConvService(prismaAcc));
+    const serviceAcc = new CampaignsService(
+      prismaAcc,
+      makeConvService(prismaAcc),
+    );
     const accResult = await serviceAcc.updateApplicationStatus(
       'user-brand-1',
       'campaign-1',

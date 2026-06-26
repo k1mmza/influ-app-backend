@@ -229,6 +229,11 @@ export class PlatformConnectService {
       accessToken: tokens.accessToken,
       tokenExpiry: tokens.expiry,
       syncedAt: new Date(),
+      // A successful (re)connect/sync persisted fresh tokens — this account is
+      // healthy, so clear any needsReauth flag immediately (banner disappears
+      // without waiting for the next daily sync). The tracking sync's
+      // TikTokAuthError -> needsReauth=true catch re-flags it if revoked later.
+      needsReauth: false,
       spotlightVideoId: channel.spotlightVideo?.id ?? null,
       spotlightVideoTitle: channel.spotlightVideo?.title ?? null,
       spotlightThumbnailUrl: channel.spotlightVideo?.thumbnail ?? null,

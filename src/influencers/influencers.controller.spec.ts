@@ -19,7 +19,8 @@ async function buildApp(jwtMock: object) {
     controllers: [InfluencersController],
     providers: [{ provide: InfluencersService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
     .compile();
   return initApp(module);
 }
@@ -27,32 +28,47 @@ async function buildApp(jwtMock: object) {
 describe('InfluencersController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
   describe('GET /influencers (public)', () => {
     it('200 returns influencers list', async () => {
       svc.findAll.mockResolvedValueOnce([{ id: 'inf-1' }]);
-      const res = await request(app.getHttpServer()).get('/influencers').expect(200);
+      const res = await request(app.getHttpServer())
+        .get('/influencers')
+        .expect(200);
       expect(res.body).toEqual([{ id: 'inf-1' }]);
     });
 
     it('200 passes query filters to service', async () => {
       svc.findAll.mockResolvedValueOnce([]);
-      await request(app.getHttpServer()).get('/influencers?gender=female&platform=instagram').expect(200);
-      expect(svc.findAll).toHaveBeenCalledWith(expect.objectContaining({ gender: 'female', platform: 'instagram' }));
+      await request(app.getHttpServer())
+        .get('/influencers?gender=female&platform=instagram')
+        .expect(200);
+      expect(svc.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ gender: 'female', platform: 'instagram' }),
+      );
     });
 
     it('400 when service rejects invalid gender (controller passes it through, service validates)', async () => {
-      svc.findAll.mockRejectedValueOnce(new BadRequestException('Invalid gender value'));
-      await request(app.getHttpServer()).get('/influencers?gender=invalid').expect(400);
+      svc.findAll.mockRejectedValueOnce(
+        new BadRequestException('Invalid gender value'),
+      );
+      await request(app.getHttpServer())
+        .get('/influencers?gender=invalid')
+        .expect(400);
     });
   });
 
   describe('GET /influencers/lookup (public)', () => {
     it('200 looks up by platform and handle', async () => {
-      svc.lookupByHandle.mockResolvedValueOnce({ id: 'inf-1', handle: '@test' });
+      svc.lookupByHandle.mockResolvedValueOnce({
+        id: 'inf-1',
+        handle: '@test',
+      });
       const res = await request(app.getHttpServer())
         .get('/influencers/lookup?platform=instagram&handle=testuser')
         .expect(200);
@@ -60,11 +76,15 @@ describe('InfluencersController', () => {
     });
 
     it('400 on missing platform', async () => {
-      await request(app.getHttpServer()).get('/influencers/lookup?handle=testuser').expect(400);
+      await request(app.getHttpServer())
+        .get('/influencers/lookup?handle=testuser')
+        .expect(400);
     });
 
     it('400 on missing handle', async () => {
-      await request(app.getHttpServer()).get('/influencers/lookup?platform=instagram').expect(400);
+      await request(app.getHttpServer())
+        .get('/influencers/lookup?platform=instagram')
+        .expect(400);
     });
 
     it('400 on missing both params', async () => {
@@ -82,7 +102,9 @@ describe('InfluencersController', () => {
     });
 
     it('400 on missing influencerId', async () => {
-      await request(app.getHttpServer()).get('/influencers/claim-candidates').expect(400);
+      await request(app.getHttpServer())
+        .get('/influencers/claim-candidates')
+        .expect(400);
     });
 
     it('401 without token', async () => {
@@ -123,14 +145,21 @@ describe('InfluencersController', () => {
 
   describe('GET /influencers/:id (public)', () => {
     it('200 returns influencer by id', async () => {
-      svc.findOne.mockResolvedValueOnce({ id: 'inf-1', name: 'Test Influencer' });
-      const res = await request(app.getHttpServer()).get('/influencers/inf-1').expect(200);
+      svc.findOne.mockResolvedValueOnce({
+        id: 'inf-1',
+        name: 'Test Influencer',
+      });
+      const res = await request(app.getHttpServer())
+        .get('/influencers/inf-1')
+        .expect(200);
       expect(res.body.id).toBe('inf-1');
     });
 
     it('404 when influencer not found', async () => {
       svc.findOne.mockRejectedValueOnce(new NotFoundException());
-      await request(app.getHttpServer()).get('/influencers/nonexistent').expect(404);
+      await request(app.getHttpServer())
+        .get('/influencers/nonexistent')
+        .expect(404);
     });
   });
 });

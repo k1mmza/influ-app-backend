@@ -12,7 +12,8 @@ async function buildApp(jwtMock: object) {
     controllers: [DashboardController],
     providers: [{ provide: DashboardService, useValue: svc }],
   })
-    .overrideGuard(JwtAuthGuard).useValue(jwtMock)
+    .overrideGuard(JwtAuthGuard)
+    .useValue(jwtMock)
     .compile();
   return initApp(module);
 }
@@ -20,14 +21,21 @@ async function buildApp(jwtMock: object) {
 describe('DashboardController', () => {
   let app: any;
 
-  beforeAll(async () => { app = await buildApp(AUTH_PASS); });
+  beforeAll(async () => {
+    app = await buildApp(AUTH_PASS);
+  });
   afterAll(() => app.close());
   beforeEach(() => jest.clearAllMocks());
 
   describe('GET /dashboard', () => {
     it('200 returns dashboard data for user', async () => {
-      svc.getDashboardData.mockResolvedValueOnce({ campaigns: 3, influencers: 10 });
-      const res = await request(app.getHttpServer()).get('/dashboard').expect(200);
+      svc.getDashboardData.mockResolvedValueOnce({
+        campaigns: 3,
+        influencers: 10,
+      });
+      const res = await request(app.getHttpServer())
+        .get('/dashboard')
+        .expect(200);
       expect(res.body).toEqual({ campaigns: 3, influencers: 10 });
       expect(svc.getDashboardData).toHaveBeenCalledWith(TEST_USER_ID);
     });
