@@ -78,6 +78,10 @@ export class AuthService {
       }
     }
 
+    if (user?.isDeleted) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
     if (!user) {
       user = await this.prisma.user.create({
         data: {
@@ -98,7 +102,8 @@ export class AuthService {
       where: { email: dto.email },
     });
 
-    if (!user) {
+    if (!user || user.isDeleted) {
+      // Same message for deleted accounts so we don't reveal the account exists.
       throw new UnauthorizedException('Invalid credentials');
     }
 
