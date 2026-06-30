@@ -99,9 +99,20 @@ export class InvitationsService {
 
     const influencer = await this.prisma.influencerProfile.findUnique({
       where: { id: influencerId },
-      select: { id: true },
+      select: { id: true, userId: true, isExternal: true },
     });
     if (!influencer) throw new NotFoundException('Influencer not found');
+
+    // External / URL-derived profiles have no real user account behind them, so
+    // an invitation would be dead — nobody can ever see or accept it. `userId`
+    // stays null even after a claim (claiming merges into the claimer's OWN
+    // profile and leaves this row as a tombstone), so the user-presence check is
+    // the reliable guard, not `isExternal` alone.
+    if (!influencer.userId) {
+      throw new BadRequestException(
+        'This creator is not a registered InfluApp user yet and cannot be invited.',
+      );
+    }
 
     // find-or-create on the @@unique([campaignId, influencerId]) constraint.
     const existing = await this.prisma.campaignApplication.findUnique({

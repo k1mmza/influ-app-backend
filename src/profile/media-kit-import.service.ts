@@ -43,7 +43,7 @@ export interface MediaKitAnalysisResult {
   proposed: MediaKitProposed;
   claimedMetrics: MediaKitClaimedMetrics;
   warnings: string[];
-  source: 'json' | 'pdf' | 'image' | 'unknown';
+  source: 'json' | 'text' | 'pdf' | 'image' | 'unknown';
 }
 
 type UploadedFileLike = {
@@ -99,27 +99,28 @@ export class MediaKitImportService {
   ): Promise<MediaKitAnalysisResult> {
     if (!file || !file.buffer?.length) {
       return this.empty('unknown', [
-        'No file received. Upload a JSON or text-based PDF media kit.',
+        'No file received. Download the template, fill it in, and upload it (text or PDF).',
       ]);
     }
 
     const name = (file.originalname || '').toLowerCase();
     const mime = file.mimetype || '';
 
-    const isJson =
-      mime.includes('json') || mime === 'text/plain' || name.endsWith('.json');
+    const isJson = mime.includes('json') || name.endsWith('.json');
+    const isText = mime === 'text/plain' || name.endsWith('.txt');
     const isPdf = mime === 'application/pdf' || name.endsWith('.pdf');
     const isImage = mime.startsWith('image/');
 
     if (isJson) return this.analyzeJson(file.buffer);
+    if (isText) return this.analyzeText(file.buffer);
     if (isPdf) return this.analyzePdf(file.buffer);
     if (isImage) {
       return this.empty('image', [
-        'Image media kits are not supported yet — upload a JSON or text-based PDF.',
+        'Image media kits are not supported yet — upload the filled-in text template or a text-based PDF.',
       ]);
     }
     return this.empty('unknown', [
-      'Unsupported file type. Upload a JSON or text-based PDF media kit.',
+      'Unsupported file type. Upload the filled-in text template (.txt) or a text-based PDF.',
     ]);
   }
 
@@ -148,23 +149,65 @@ export class MediaKitImportService {
     return { proposed, claimedMetrics, warnings, source: 'json' };
   }
 
+  // ─── Text-template path (deterministic, no AI) ─────────────────────────────
+  // The human-friendly "Label: value" template downloaded in the app. No JSON
+  // knowledge required. A plain .json uploaded as text/plain is handled too.
+  private analyzeText(buffer: Buffer): MediaKitAnalysisResult {
+    const content = buffer.toString('utf-8');
+    const trimmed = content.trim();
+
+    // A JSON export may arrive with a text/plain mime — parse it transparently.
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const raw: unknown = JSON.parse(trimmed);
+        const obj = isRecord(raw) && isRecord(raw.mediaKit) ? raw.mediaKit : raw;
+        if (isRecord(obj)) {
+          const { proposed, claimedMetrics } = this.mapRaw(obj);
+          return {
+            proposed,
+            claimedMetrics,
+            warnings: Object.keys(proposed).length
+              ? []
+              : ['No recognizable profile fields were found in the file.'],
+            source: 'json',
+          };
+        }
+      } catch {
+        // Not valid JSON — fall through to the labelled-line parser.
+      }
+    }
+
+    const record = parseLabeledText(content);
+    const { proposed, claimedMetrics } = this.mapRaw(record);
+    const warnings: string[] = [];
+    if (Object.keys(proposed).length === 0) {
+      warnings.push(
+        'No filled-in fields were found. Open the template, type your details after each colon, and upload it again.',
+      );
+    }
+    return { proposed, claimedMetrics, warnings, source: 'text' };
+  }
+
   // ─── PDF path (text extraction → Haiku) ────────────────────────────────────
   private async analyzePdf(buffer: Buffer): Promise<MediaKitAnalysisResult> {
     let text = '';
     try {
-      const data = await pdfParse(buffer);
+      // Use the newer bundled pdfjs (v2.0.550) — the default v1.10.100 is from
+      // 2018 and throws on many modern PDFs (e.g. design-tool exports with
+      // compressed xref streams / subsetted fonts).
+      const data = await pdfParse(buffer, { version: 'v2.0.550' });
       text = (data.text || '').trim();
     } catch (err: any) {
       this.logger.error(`PDF text extraction failed: ${err.message}`);
       return this.empty('pdf', [
-        "Couldn't read text from that PDF. Try a JSON export instead.",
+        "Couldn't read this PDF — some media-kit PDFs (especially design-tool exports) aren't text-readable. Use the “Download Template” button, fill in the text file, and upload that instead.",
       ]);
     }
 
     if (text.length < 20) {
       // Image-only / scanned PDF — we do not OCR or run vision here.
       return this.empty('pdf', [
-        'This PDF has no extractable text (it looks scanned or image-only). Upload a JSON export instead.',
+        'This PDF has no extractable text (it looks scanned or image-only). Use the “Download Template” button and upload the filled-in text file instead.',
       ]);
     }
 
@@ -323,6 +366,30 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/**
+ * Parse the human-friendly text template: one "Label: value" per line, with
+ * `#` comment lines and blanks ignored. Labels are normalized to alias keys
+ * (lower-cased, non-alphanumerics stripped) so mapRaw's existing aliases match —
+ * e.g. "Price per post" → "priceperpost", "Average views" → "averageviews".
+ * Only the first colon splits, so values may themselves contain colons (URLs).
+ */
+function parseLabeledText(content: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const idx = trimmed.indexOf(':');
+    if (idx === -1) continue;
+    const key = trimmed
+      .slice(0, idx)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    const value = trimmed.slice(idx + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
 /** Lower-case all top-level keys so alias lookups are case-insensitive. */
 function lowerKeyed(v: unknown): Record<string, unknown> {
   if (!isRecord(v)) return {};
@@ -345,7 +412,8 @@ function firstString(
 function toNumber(v: unknown): number | undefined {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v === 'string') {
-    const cleaned = v.replace(/[, ]/g, '');
+    // strip thousands separators, spaces, currency, and a trailing % (e.g. "4.5%")
+    const cleaned = v.replace(/[,\s%฿$€£]/g, '');
     // support shorthand like "12k" / "1.2m"
     const m = cleaned.match(/^([\d.]+)\s*([kmb])?$/i);
     if (m) {

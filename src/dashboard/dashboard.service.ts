@@ -58,13 +58,45 @@ export class DashboardService {
         })
       : 0;
 
+    // Unread = messages in this influencer's conversations that they didn't send
+    // and haven't been marked read yet (markAsRead flips isRead on open).
+    const unreadMessagesCount = influencerId
+      ? await this.prisma.message.count({
+          where: {
+            isRead: false,
+            senderId: { not: user.id },
+            conversation: { influencerId: influencerId },
+          },
+        })
+      : 0;
+
+    // Engagement rate isn't stored on the profile — derive it from the creator's
+    // connected platform accounts (average of accounts that have an ER recorded).
+    const platformAccounts = influencerId
+      ? await this.prisma.platformAccount.findMany({
+          where: { influencerId, engagementRate: { gt: 0 } },
+          select: { engagementRate: true },
+        })
+      : [];
+    const engagementRate = platformAccounts.length
+      ? platformAccounts.reduce((sum, a) => sum + a.engagementRate, 0) /
+        platformAccounts.length
+      : null;
+
     return {
       role: 'influencer',
       stats: {
         walletBalance: user.wallet?.balance || 0,
         activeCampaigns: activeCampaignsCount,
         pendingApplications: pendingAppsCount,
-        unreadMessages: 0, // Placeholder
+        unreadMessages: unreadMessagesCount,
+        // Performance card — real profile metrics (null when not yet computed).
+        growthRate: user.influencerProfile?.growthRate ?? null,
+        performanceScore: user.influencerProfile?.performanceScore ?? null,
+        engagementRate,
+        // Earnings card — real wallet figures.
+        totalEarned: user.wallet?.totalEarned ?? 0,
+        pendingPayout: user.wallet?.pendingPayout ?? 0,
       },
       recommendedCampaigns: await this.prisma.campaign.findMany({
         take: 2,
@@ -82,30 +114,116 @@ export class DashboardService {
       where: { brandProfileId: brandProfileId },
     });
 
-    const activeCampaignsCount = clientBrand
-      ? await this.prisma.campaign.count({
-          where: {
-            clientBrandId: clientBrand.id,
-            status: 'ACTIVE',
-          },
+    // No brand workspace yet → return an all-zero/empty shell so the UI renders
+    // real "nothing yet" states instead of fabricated numbers.
+    if (!clientBrand) {
+      return {
+        role: 'brand',
+        stats: {
+          activeCampaigns: 0,
+          influencersHired: 0,
+          budgetSpent: 0,
+          avgEngagement: null,
+          totalReach: 0,
+        },
+        activeCampaigns: [],
+        performance: { impressions: 0, engagements: 0 },
+        payments: { paidCount: 0, pendingCount: 0, activeBudget: 0, budgetSpent: 0 },
+        recentActivity: [],
+      };
+    }
+
+    const campaigns = await this.prisma.campaign.findMany({
+      where: { clientBrandId: clientBrand.id },
+      select: { id: true, budget: true, status: true },
+    });
+    const campaignIds = campaigns.map((c) => c.id);
+    const activeStatuses = ['ACTIVE', 'PUBLIC'];
+    const activeCampaigns = campaigns.filter((c) =>
+      activeStatuses.includes(c.status),
+    );
+    const activeBudget = activeCampaigns.reduce(
+      (sum, c) => sum + (c.budget ?? 0),
+      0,
+    );
+
+    // Distinct creators with an accepted application across this brand's campaigns.
+    const acceptedApps = await this.prisma.campaignApplication.findMany({
+      where: { campaignId: { in: campaignIds }, status: 'ACCEPTED' },
+      select: { influencerId: true },
+      distinct: ['influencerId'],
+    });
+    const hiredInfluencerIds = acceptedApps.map((a) => a.influencerId);
+
+    // Reach = total audience of hired creators across their platform accounts.
+    const reachAgg = hiredInfluencerIds.length
+      ? await this.prisma.platformAccount.aggregate({
+          where: { influencerId: { in: hiredInfluencerIds } },
+          _sum: { followers: true },
         })
-      : 0;
+      : { _sum: { followers: 0 } };
+
+    // Real money paid out vs. still pending, from the Payment ledger.
+    const [paidAgg, pendingCount] = await Promise.all([
+      this.prisma.payment.aggregate({
+        where: { clientBrandId: clientBrand.id, status: 'PAID' },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      this.prisma.payment.count({
+        where: {
+          clientBrandId: clientBrand.id,
+          status: { in: ['PENDING', 'AWAITING_CONFIRMATION'] },
+        },
+      }),
+    ]);
+
+    // Live post metrics aggregated from tracking snapshots.
+    const trackingAgg = campaignIds.length
+      ? await this.prisma.trackingResult.aggregate({
+          where: { campaignId: { in: campaignIds } },
+          _sum: { views: true, likes: true, comments: true, shares: true },
+          _avg: { engagementRate: true },
+        })
+      : {
+          _sum: { views: 0, likes: 0, comments: 0, shares: 0 },
+          _avg: { engagementRate: null },
+        };
+    const impressions = trackingAgg._sum.views ?? 0;
+    const engagements =
+      (trackingAgg._sum.likes ?? 0) +
+      (trackingAgg._sum.comments ?? 0) +
+      (trackingAgg._sum.shares ?? 0);
+
+    const recentActivity = await this.prisma.notification.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { id: true, title: true, body: true, createdAt: true, isRead: true },
+    });
 
     return {
       role: 'brand',
       stats: {
-        activeCampaigns: activeCampaignsCount,
-        influencersHired: 0, // Placeholder
-        budgetSpent: 0, // Placeholder
-        avgEngagement: 0, // Placeholder
-        totalReach: 0, // Placeholder
+        activeCampaigns: activeCampaigns.length,
+        influencersHired: hiredInfluencerIds.length,
+        budgetSpent: paidAgg._sum.amount ?? 0,
+        avgEngagement: trackingAgg._avg.engagementRate ?? null,
+        totalReach: reachAgg._sum.followers ?? 0,
       },
-      activeCampaigns: clientBrand
-        ? await this.prisma.campaign.findMany({
-            where: { clientBrandId: clientBrand.id, status: 'ACTIVE' },
-            take: 5,
-          })
-        : [],
+      activeCampaigns: await this.prisma.campaign.findMany({
+        where: { clientBrandId: clientBrand.id, status: { in: activeStatuses } },
+        select: { id: true, name: true },
+        take: 5,
+      }),
+      performance: { impressions, engagements },
+      payments: {
+        paidCount: paidAgg._count,
+        pendingCount,
+        activeBudget,
+        budgetSpent: paidAgg._sum.amount ?? 0,
+      },
+      recentActivity,
     };
   }
 

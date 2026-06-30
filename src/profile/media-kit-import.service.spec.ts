@@ -205,4 +205,63 @@ describe('MediaKitImportService', () => {
     expect(res.proposed.bio).toBe('Wrapped bio');
     expect(res.proposed.categories).toEqual(['Gaming']);
   });
+
+  // ─── Text-template path (the non-JSON, fill-in-the-blanks file) ─────────────
+  const textFile = (content: string) => ({
+    buffer: Buffer.from(content, 'utf-8'),
+    mimetype: 'text/plain',
+    originalname: 'media-kit-template.txt',
+  });
+
+  it('TC-10: text template "Label: value" lines map to proposed + rate card, comments ignored', async () => {
+    const { service, ai } = build();
+    const res = await service.analyzeFile(
+      textFile(
+        [
+          '# notes are ignored',
+          'Bio: Lifestyle creator in Bangkok',
+          'Categories: Beauty, Lifestyle',
+          'Availability: Open for collabs',
+          'Price per post: 5,000',
+          'Package price: 30000',
+          'Keywords:', // blank value → skipped
+        ].join('\n'),
+      ),
+    );
+    expect(ai.analyzeMediaKit).not.toHaveBeenCalled(); // deterministic, no AI
+    expect(res.source).toBe('text');
+    expect(res.proposed.bio).toBe('Lifestyle creator in Bangkok');
+    expect(res.proposed.categories).toEqual(['Beauty', 'Lifestyle']);
+    expect(res.proposed.availabilityStatus).toBe('Open for collabs');
+    expect(res.proposed.rateCard).toEqual({
+      pricePerPost: 5000,
+      packagePrice: 30000,
+    });
+    expect(res.proposed.keywords).toBeUndefined();
+  });
+
+  it('TC-11: claimed metrics in the text template stay in claimedMetrics, never proposed', async () => {
+    const { service } = build();
+    const res = await service.analyzeFile(
+      textFile(
+        ['Followers: 12k', 'Engagement rate: 4.5%', 'Bio: hello'].join('\n'),
+      ),
+    );
+    expect(res.claimedMetrics.followers).toBe(12000);
+    expect(res.claimedMetrics.engagementRate).toBe(4.5); // trailing % tolerated
+    // firewall: no metric leaks into a writable proposed field
+    expect(JSON.stringify(res.proposed)).not.toContain('12000');
+    expect(res.proposed).toEqual({ bio: 'hello' });
+  });
+
+  it('TC-12: a JSON file uploaded as text/plain is still parsed as JSON', async () => {
+    const { service } = build();
+    const res = await service.analyzeFile({
+      buffer: Buffer.from(JSON.stringify({ bio: 'json-as-text' }), 'utf-8'),
+      mimetype: 'text/plain',
+      originalname: 'kit.txt',
+    });
+    expect(res.source).toBe('json');
+    expect(res.proposed.bio).toBe('json-as-text');
+  });
 });
