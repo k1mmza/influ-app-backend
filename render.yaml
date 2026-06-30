@@ -1,0 +1,137 @@
+# Render Blueprint — InfluApp backend (NestJS 11 + Prisma)
+# ---------------------------------------------------------------------------
+# Lives at the root of the influ-app-backend repo (the repo Render connects to).
+# This deploys ONLY the backend. The frontend goes to Vercel.
+#
+# Database: Supabase (external). This blueprint does NOT declare a Render
+# Postgres — the app connects to Supabase via DATABASE_URL / DIRECT_URL,
+# which you set in the Render dashboard.
+#
+# All secrets are declared with `sync: false` (dashboard-set), so nothing
+# sensitive is committed. Non-secret config carries inline values.
+#
+# Apply: Render Dashboard → New → Blueprint → point at this repo.
+# ---------------------------------------------------------------------------
+
+services:
+  - type: web
+    name: influ-app-backend
+    runtime: node
+    branch: main
+    plan: starter                     # ALWAYS-ON (not free tier). Required so the
+                                      # @Cron schedulers can run and so the
+                                      # preDeployCommand (paid-only) is available.
+                                      # Free tier sleeps → cron + cold starts break.
+    autoDeploy: false                 # deploy manually after review (flip later if desired)
+    region: oregon                    # pick the region nearest your Supabase project
+
+    # Build the app. Mirrors the existing Dockerfile steps (install → generate → build).
+    # The repo root IS the NestJS project, so commands run from there (no rootDir).
+    buildCommand: npm install && npx prisma generate && npm run build
+
+    # Pre-deploy / release phase. Render runs this AFTER a successful build and
+    # BEFORE the new version receives traffic — this guarantees migrate-before-serve.
+    # (preDeployCommand is a separate release phase, not part of the build, and is
+    # available on paid instance types only.) Uses DIRECT_URL (non-pooled) for DDL.
+    preDeployCommand: npx prisma migrate deploy
+
+    startCommand: node dist/main.js
+
+    # Render injects PORT automatically and the app reads process.env.PORT.
+    # GET / returns 200 ("Hello World!"), so it serves as the health check.
+    # (A dedicated /health endpoint would be cleaner but is a code change — not added.)
+    healthCheckPath: /
+
+    numInstances: 1                   # MUST stay 1 while the uploads disk is attached
+                                      # (a Render Disk cannot be shared across instances).
+
+    # Persistent storage for user uploads (avatars, rate cards, chat attachments,
+    # payment proofs). The app serves these from UPLOAD_BASE_DIR at /uploads.
+    # Render's filesystem is otherwise ephemeral — without this disk, uploads are
+    # lost on every deploy/restart. Mirrors the Railway volume used previously.
+    # NOTE / DECISION: a disk pins the service to a single instance. Migrating
+    # uploads to object storage (S3/R2) would remove that constraint.
+    disk:
+      name: uploads
+      mountPath: /data
+      sizeGB: 1
+
+    envVars:
+      # --- Core (set in dashboard) -----------------------------------------
+      - key: DATABASE_URL            # SECRET — Supabase pooled connection string (Prisma runtime)
+        sync: false
+      - key: DIRECT_URL              # SECRET — Supabase DIRECT (non-pooled, :5432) connection.
+        sync: false                  #          Required for `prisma migrate deploy` (pooler can't run DDL).
+      - key: JWT_SECRET              # SECRET — REQUIRED. Falls back to a hardcoded dev key if unset
+        sync: false                  #          (silent + insecure). Set a strong random value.
+
+      # --- Frontend / CORS --------------------------------------------------
+      - key: FRONTEND_URL            # REQUIRED — your Vercel prod URL, e.g. https://influapp.vercel.app
+        sync: false                  #            Used for CORS origin AND OAuth post-login redirects.
+
+      # --- Redis / queue ----------------------------------------------------
+      - key: REDIS_URL               # SECRET — REQUIRED. BullMQ connects at boot and jobs are enqueued
+        fromService:                 #          on influencer views, so the app needs Redis in normal use.
+          type: keyvalue             #          Wired from the Render Key Value instance below.
+          name: influ-app-redis      #          (To use external Redis e.g. Upstash instead: delete this
+          property: connectionString #           fromService block + the keyvalue service, and set sync:false.)
+
+      # --- Uploads ----------------------------------------------------------
+      - key: UPLOAD_BASE_DIR         # points at the persistent disk mount above
+        value: /data/uploads
+
+      # --- Sync feature flags — PINNED OFF ---------------------------------
+      # Deployment must NOT enable these. Verify the deploy, then flip in the
+      # dashboard as a deliberate choice. Do not change the gating logic.
+      - key: YOUTUBE_SYNC_ENABLED
+        value: "false"
+      - key: TIKTOK_SYNC_ENABLED
+        value: "false"
+
+      # --- AI (Smart Plan / analysis / smart search) -----------------------
+      - key: ANTHROPIC_API_KEY       # SECRET — required for Smart Plan + AI search; feature-level
+        sync: false                  #          failure (not boot) if missing.
+
+      # --- Google login + YouTube connect ----------------------------------
+      - key: GOOGLE_CLIENT_ID        # SECRET — Google OAuth + YouTube connect
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET    # SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL     # e.g. https://<backend>.onrender.com/auth/google/callback
+        sync: false
+      - key: YOUTUBE_API_KEY         # SECRET — YouTube data fetch (connect + sync adapter; sync is OFF)
+        sync: false
+      - key: YOUTUBE_CONNECT_CALLBACK_URL  # e.g. https://<backend>.onrender.com/auth/youtube/connect/callback
+        sync: false
+
+      # --- Platform connect (TikTok / Instagram) ---------------------------
+      - key: PLATFORM_CONNECT_CALLBACK_URL # e.g. https://<backend>.onrender.com/auth/platform/connect/callback
+        sync: false
+      - key: TIKTOK_CLIENT_KEY       # SECRET — only needed if TikTok connect is used
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET    # SECRET
+        sync: false
+      - key: INSTAGRAM_APP_ID        # SECRET — only needed if Instagram connect is used
+        sync: false
+      - key: INSTAGRAM_APP_SECRET    # SECRET
+        sync: false
+
+      # --- Scraping + admin (optional now; sync flags are OFF) -------------
+      - key: APIFY_API_TOKEN         # SECRET — TikTok/Instagram scrape adapters (sync only)
+        sync: false
+      - key: ADMIN_EMAILS            # comma-separated allowlist for the manual tracking-sync trigger
+        sync: false
+
+  # Render Key Value (managed Redis) backing the BullMQ queue. Declared as a
+  # service (NOT under `databases:`, which is Postgres-only). Allowed by the
+  # constraints — the prohibition is only on a Render-managed Postgres.
+  # noeviction ensures queued jobs are never dropped under memory pressure.
+  # Remove this entry if you point REDIS_URL at an external Redis instead.
+  - type: keyvalue
+    name: influ-app-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: noeviction
+    ipAllowList: []   # internal-only access from the web service
+
+# No Render-managed Postgres is declared — the app uses Supabase via DATABASE_URL.
