@@ -490,7 +490,14 @@ export class CampaignsService {
       if (!clientBrand) return [];
       return this.prisma.campaign.findMany({
         where: { clientBrandId: clientBrand.id, deletedAt: null },
-        include: { clientBrand: true, applications: { select: { id: true } } },
+        include: {
+          clientBrand: true,
+          // status + origin let the dashboard surface pending applications
+          // awaiting brand review without a per-campaign fan-out.
+          applications: {
+            select: { id: true, status: true, origin: true, influencerId: true },
+          },
+        },
         orderBy: { createdAt: 'desc' },
       });
     }
@@ -501,7 +508,12 @@ export class CampaignsService {
           clientBrand: { agencyId: user.agencyProfile.id },
           deletedAt: null,
         },
-        include: { clientBrand: true, applications: { select: { id: true } } },
+        include: {
+          clientBrand: true,
+          applications: {
+            select: { id: true, status: true, origin: true, influencerId: true },
+          },
+        },
         orderBy: { createdAt: 'desc' },
       });
     }
