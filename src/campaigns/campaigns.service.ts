@@ -187,6 +187,7 @@ export class CampaignsService {
       name: dto.name,
       objective: dto.objective,
       budget: dto.budget,
+      coverImageUrl: dto.coverImageUrl,
       visibility: dto.visibility,
       status: dto.status,
       paymentType: dto.paymentType,
@@ -224,6 +225,26 @@ export class CampaignsService {
     return this.prisma.campaign.update({
       where: { id: campaignId },
       data: updateData,
+      include: { requirements: true, applications: true, clientBrand: true },
+    });
+  }
+
+  async uploadCoverImage(
+    userId: string,
+    campaignId: string,
+    coverImageUrl: string,
+  ) {
+    const user = await this.findUserWithProfiles(userId);
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId, deletedAt: null },
+      include: { clientBrand: true },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    this.assertCampaignOwnership(user, campaign);
+
+    return this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { coverImageUrl },
       include: { requirements: true, applications: true, clientBrand: true },
     });
   }

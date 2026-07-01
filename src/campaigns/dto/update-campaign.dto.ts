@@ -25,6 +25,10 @@ export class UpdateCampaignDto {
 
   @IsOptional()
   @IsString()
+  coverImageUrl?: string;
+
+  @IsOptional()
+  @IsString()
   visibility?: string;
 
   @IsOptional()
