@@ -36,7 +36,7 @@ services:
     # here — it's a paid-only release phase. Apply migrations manually before the
     # test (see header). The app itself does not run migrations at boot.
 
-    startCommand: node dist/main.js
+    startCommand: node dist/src/main.js
 
     # Render injects PORT automatically and the app reads process.env.PORT.
     # GET / returns 200 ("Hello World!"), so it serves as the health check.
