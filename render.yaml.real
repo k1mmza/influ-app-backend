@@ -1,20 +1,16 @@
-# Render Blueprint — InfluApp backend — FREE-TIER SMOKE TEST ONLY
+# Render Blueprint — InfluApp backend (NestJS 11 + Prisma)
 # ---------------------------------------------------------------------------
-# ⚠️  THROWAWAY / TEST FILE. Do NOT use this for the real deploy — use
-#     render.yaml for that. This variant exists only to bring the service up
-#     cheaply to smoke-test the build/boot/health-check path.
+# Lives at the root of the influ-app-backend repo (the repo Render connects to).
+# This deploys ONLY the backend. The frontend goes to Vercel.
 #
-# Differences vs. render.yaml (all four, so this actually runs card-free):
-#   1. web service plan: starter → free
-#   2. preDeployCommand removed — paid-only release phase, won't run on free.
-#      Apply the pending migration MANUALLY first:  npx prisma migrate deploy
-#   3. disk block removed — free web services don't support persistent disks
-#      (paid instances only). Uploads are ephemeral for this test.
-#   4. keyvalue (influ-app-redis) plan: starter → free.
+# Database: Supabase (external). This blueprint does NOT declare a Render
+# Postgres — the app connects to Supabase via DATABASE_URL / DIRECT_URL,
+# which you set in the Render dashboard.
 #
-# buildCommand, startCommand, healthCheckPath, and all envVars are unchanged
-# from render.yaml. (Note: UPLOAD_BASE_DIR still points at /data/uploads, which
-# is no longer a mounted disk — see the note by that var.)
+# All secrets are declared with `sync: false` (dashboard-set), so nothing
+# sensitive is committed. Non-secret config carries inline values.
+#
+# Apply: Render Dashboard → New → Blueprint → point at this repo.
 # ---------------------------------------------------------------------------
 
 services:
@@ -22,9 +18,10 @@ services:
     name: influ-app-backend
     runtime: node
     branch: main
-    plan: free                        # SMOKE TEST ONLY. Sleeps when idle; @Cron
-                                      # schedulers and preDeployCommand are NOT
-                                      # available on free. Do not ship this.
+    plan: starter                     # ALWAYS-ON (not free tier). Required so the
+                                      # @Cron schedulers can run and so the
+                                      # preDeployCommand (paid-only) is available.
+                                      # Free tier sleeps → cron + cold starts break.
     autoDeploy: false                 # deploy manually after review (flip later if desired)
     region: oregon                    # pick the region nearest your Supabase project
 
@@ -32,9 +29,11 @@ services:
     # The repo root IS the NestJS project, so commands run from there (no rootDir).
     buildCommand: npm install && npx prisma generate && npm run build
 
-    # NOTE: preDeployCommand (npx prisma migrate deploy) is intentionally REMOVED
-    # here — it's a paid-only release phase. Apply migrations manually before the
-    # test (see header). The app itself does not run migrations at boot.
+    # Pre-deploy / release phase. Render runs this AFTER a successful build and
+    # BEFORE the new version receives traffic — this guarantees migrate-before-serve.
+    # (preDeployCommand is a separate release phase, not part of the build, and is
+    # available on paid instance types only.) Uses DIRECT_URL (non-pooled) for DDL.
+    preDeployCommand: npx prisma migrate deploy
 
     startCommand: node dist/main.js
 
@@ -43,12 +42,19 @@ services:
     # (A dedicated /health endpoint would be cleaner but is a code change — not added.)
     healthCheckPath: /
 
-    numInstances: 1                   # free tier is single-instance anyway
+    numInstances: 1                   # MUST stay 1 while the uploads disk is attached
+                                      # (a Render Disk cannot be shared across instances).
 
-    # NOTE: no persistent `disk:` here — free web services don't support disks
-    # (paid instances only). Uploads written under UPLOAD_BASE_DIR are EPHEMERAL
-    # for this smoke test and vanish on restart/redeploy. That's fine for a
-    # throwaway boot/health-check test. The real render.yaml keeps the disk.
+    # Persistent storage for user uploads (avatars, rate cards, chat attachments,
+    # payment proofs). The app serves these from UPLOAD_BASE_DIR at /uploads.
+    # Render's filesystem is otherwise ephemeral — without this disk, uploads are
+    # lost on every deploy/restart. Mirrors the Railway volume used previously.
+    # NOTE / DECISION: a disk pins the service to a single instance. Migrating
+    # uploads to object storage (S3/R2) would remove that constraint.
+    disk:
+      name: uploads
+      mountPath: /data
+      sizeGB: 1
 
     envVars:
       # --- Core (set in dashboard) -----------------------------------------
@@ -71,11 +77,8 @@ services:
           property: connectionString #           fromService block + the keyvalue service, and set sync:false.)
 
       # --- Uploads ----------------------------------------------------------
-      - key: UPLOAD_BASE_DIR         # NOTE: no disk on free tier, so /data is NOT a
-        value: /data/uploads         #       mounted volume — writes here are ephemeral
-                                     #       (or may fail if /data isn't writable). Fine
-                                     #       for a boot test; set to ./uploads if you
-                                     #       need to exercise upload endpoints.
+      - key: UPLOAD_BASE_DIR         # points at the persistent disk mount above
+        value: /data/uploads
 
       # --- Sync feature flags — PINNED OFF ---------------------------------
       # Deployment must NOT enable these. Verify the deploy, then flip in the
@@ -126,7 +129,7 @@ services:
   # Remove this entry if you point REDIS_URL at an external Redis instead.
   - type: keyvalue
     name: influ-app-redis
-    plan: free
+    plan: starter
     region: oregon
     maxmemoryPolicy: noeviction
     ipAllowList: []   # internal-only access from the web service
