@@ -35,7 +35,7 @@ services:
     # available on paid instance types only.) Uses DIRECT_URL (non-pooled) for DDL.
     preDeployCommand: npx prisma migrate deploy
 
-    startCommand: node dist/main.js
+    startCommand: node dist/src/main.js
 
     # Render injects PORT automatically and the app reads process.env.PORT.
     # GET / returns 200 ("Hello World!"), so it serves as the health check.
