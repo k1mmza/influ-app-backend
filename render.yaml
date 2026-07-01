@@ -12,9 +12,9 @@
 #      (paid instances only). Uploads are ephemeral for this test.
 #   4. keyvalue (influ-app-redis) plan: starter → free.
 #
-# buildCommand, startCommand, healthCheckPath, and all envVars are unchanged
-# from render.yaml. (Note: UPLOAD_BASE_DIR still points at /data/uploads, which
-# is no longer a mounted disk — see the note by that var.)
+# buildCommand, startCommand, and healthCheckPath match render.yaml. One envVar
+# differs: UPLOAD_BASE_DIR is ./uploads here (relative, writable, ephemeral)
+# instead of /data/uploads, since there's no mounted disk on free tier.
 # ---------------------------------------------------------------------------
 
 services:
@@ -71,11 +71,11 @@ services:
           property: connectionString #           fromService block + the keyvalue service, and set sync:false.)
 
       # --- Uploads ----------------------------------------------------------
-      - key: UPLOAD_BASE_DIR         # NOTE: no disk on free tier, so /data is NOT a
-        value: /data/uploads         #       mounted volume — writes here are ephemeral
-                                     #       (or may fail if /data isn't writable). Fine
-                                     #       for a boot test; set to ./uploads if you
-                                     #       need to exercise upload endpoints.
+      - key: UPLOAD_BASE_DIR         # relative path — no disk on free tier. Writes go
+        value: ./uploads             #       under the app's working dir; EPHEMERAL
+                                     #       (vanish on restart/redeploy) but writable,
+                                     #       so upload handlers won't crash. The real
+                                     #       render.yaml uses /data/uploads (mounted disk).
 
       # --- Sync feature flags — PINNED OFF ---------------------------------
       # Deployment must NOT enable these. Verify the deploy, then flip in the
