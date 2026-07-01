@@ -19,7 +19,6 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
 const UPLOAD_DIR = `${BASE}/conversations`;
-if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 @Controller('conversations')
 @UseGuards(JwtAuthGuard)
@@ -87,7 +86,15 @@ export class ConversationsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+        destination: (req, file, cb) => {
+          try {
+            if (!existsSync(UPLOAD_DIR))
+              mkdirSync(UPLOAD_DIR, { recursive: true });
+            cb(null, UPLOAD_DIR);
+          } catch (err) {
+            cb(err as Error, UPLOAD_DIR);
+          }
+        },
         filename: (req, file, cb) =>
           cb(
             null,

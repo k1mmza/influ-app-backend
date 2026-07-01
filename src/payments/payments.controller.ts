@@ -24,7 +24,6 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 // Same upload pipeline + directory as conversations/drafts — served via /uploads (Phase 1 fix).
 const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
 const UPLOAD_DIR = `${BASE}/conversations`;
-if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 @Controller('conversations/:id/payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -52,7 +51,15 @@ export class PaymentsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+        destination: (req, file, cb) => {
+          try {
+            if (!existsSync(UPLOAD_DIR))
+              mkdirSync(UPLOAD_DIR, { recursive: true });
+            cb(null, UPLOAD_DIR);
+          } catch (err) {
+            cb(err as Error, UPLOAD_DIR);
+          }
+        },
         filename: (req, file, cb) =>
           cb(
             null,
