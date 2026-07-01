@@ -277,7 +277,7 @@ export class InfluencersService {
       this.prisma.influencerProfile.findMany({
         where,
         include: {
-          user: { select: { name: true, email: true } },
+          user: { select: { name: true, email: true, avatarUrl: true } },
           platformAccounts: { include: { audienceInsights: true } },
         },
         // Best matches first; `id` tiebreaker keeps paging stable across requests.
@@ -666,7 +666,8 @@ export class InfluencersService {
       performanceScore,
       ratePerPost: 0,
       stylePresent: Array.isArray(inf.styleTags) ? inf.styleTags : [],
-      avatarUrl: mainAccount?.avatarUrl ?? null,
+      // Prefer the platform-synced photo; fall back to the profile-uploaded avatar.
+      avatarUrl: mainAccount?.avatarUrl ?? inf.user?.avatarUrl ?? null,
       spotlightVideo,
       syncStatus: inf.syncStatus ?? 'IDLE',
       lastDataPulledAt: mainAccount?.syncedAt ?? inf.lastSyncedAt ?? null,
