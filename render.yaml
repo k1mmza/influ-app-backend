@@ -26,7 +26,7 @@ services:
                                       # schedulers and preDeployCommand are NOT
                                       # available on free. Do not ship this.
     autoDeploy: false                 # deploy manually after review (flip later if desired)
-    region: oregon                    # pick the region nearest your Supabase project
+    region: singapore                 # nearest Render region to Supabase (Seoul / ap-northeast-2)
 
     # Build the app. Mirrors the existing Dockerfile steps (install → generate → build).
     # The repo root IS the NestJS project, so commands run from there (no rootDir).
@@ -127,7 +127,7 @@ services:
   - type: keyvalue
     name: influ-app-redis
     plan: free
-    region: oregon
+    region: singapore
     maxmemoryPolicy: noeviction
     ipAllowList: []   # internal-only access from the web service
 
