@@ -107,24 +107,54 @@ export class DashboardService {
   }
 
   private async getBrandDashboard(user: any) {
-    const brandProfileId = user.brandProfile?.id;
-
-    // For brands, they are linked to ClientBrand in the schema
+    // A brand maps to exactly one ClientBrand.
     const clientBrand = await this.prisma.clientBrand.findFirst({
-      where: { brandProfileId: brandProfileId },
+      where: { brandProfileId: user.brandProfile?.id },
+      select: { id: true },
     });
+    return this.buildBrandDashboard(
+      user,
+      clientBrand ? [clientBrand.id] : [],
+      'brand',
+    );
+  }
 
-    // No brand workspace yet → return an all-zero/empty shell so the UI renders
-    // real "nothing yet" states instead of fabricated numbers.
-    if (!clientBrand) {
+  private async getAgencyDashboard(user: any) {
+    // An agency manages many ClientBrands — aggregate across all of them so the
+    // agency sees the same brand-style dashboard, portfolio-wide.
+    const brands = user.agencyProfile?.id
+      ? await this.prisma.clientBrand.findMany({
+          where: { agencyId: user.agencyProfile.id },
+          select: { id: true },
+        })
+      : [];
+    return this.buildBrandDashboard(
+      user,
+      brands.map((b) => b.id),
+      'agency',
+    );
+  }
+
+  /**
+   * Shared brand-style dashboard payload, scoped to a set of ClientBrand ids.
+   * Brand passes its single id; agency passes every managed brand's id. An empty
+   * set → an all-zero/empty shell so the UI renders real "nothing yet" states.
+   */
+  private async buildBrandDashboard(
+    user: any,
+    clientBrandIds: string[],
+    role: 'brand' | 'agency',
+  ) {
+    if (clientBrandIds.length === 0) {
       return {
-        role: 'brand',
+        role,
         stats: {
           activeCampaigns: 0,
           influencersHired: 0,
           budgetSpent: 0,
           avgEngagement: null,
           totalReach: 0,
+          unreadMessages: 0,
         },
         activeCampaigns: [],
         performance: { impressions: 0, engagements: 0 },
@@ -134,7 +164,7 @@ export class DashboardService {
     }
 
     const campaigns = await this.prisma.campaign.findMany({
-      where: { clientBrandId: clientBrand.id },
+      where: { clientBrandId: { in: clientBrandIds } },
       select: { id: true, budget: true, status: true },
     });
     const campaignIds = campaigns.map((c) => c.id);
@@ -147,7 +177,7 @@ export class DashboardService {
       0,
     );
 
-    // Distinct creators with an accepted application across this brand's campaigns.
+    // Distinct creators with an accepted application across these campaigns.
     const acceptedApps = await this.prisma.campaignApplication.findMany({
       where: { campaignId: { in: campaignIds }, status: 'ACCEPTED' },
       select: { influencerId: true },
@@ -166,13 +196,13 @@ export class DashboardService {
     // Real money paid out vs. still pending, from the Payment ledger.
     const [paidAgg, pendingCount] = await Promise.all([
       this.prisma.payment.aggregate({
-        where: { clientBrandId: clientBrand.id, status: 'PAID' },
+        where: { clientBrandId: { in: clientBrandIds }, status: 'PAID' },
         _sum: { amount: true },
         _count: true,
       }),
       this.prisma.payment.count({
         where: {
-          clientBrandId: clientBrand.id,
+          clientBrandId: { in: clientBrandIds },
           status: { in: ['PENDING', 'AWAITING_CONFIRMATION'] },
         },
       }),
@@ -202,17 +232,30 @@ export class DashboardService {
       select: { id: true, title: true, body: true, createdAt: true, isRead: true },
     });
 
+    // Unread inbound messages across these brands' conversations.
+    const unreadMessages = await this.prisma.message.count({
+      where: {
+        isRead: false,
+        senderId: { not: user.id },
+        conversation: { clientBrandId: { in: clientBrandIds } },
+      },
+    });
+
     return {
-      role: 'brand',
+      role,
       stats: {
         activeCampaigns: activeCampaigns.length,
         influencersHired: hiredInfluencerIds.length,
         budgetSpent: paidAgg._sum.amount ?? 0,
         avgEngagement: trackingAgg._avg.engagementRate ?? null,
         totalReach: reachAgg._sum.followers ?? 0,
+        unreadMessages,
       },
       activeCampaigns: await this.prisma.campaign.findMany({
-        where: { clientBrandId: clientBrand.id, status: { in: activeStatuses } },
+        where: {
+          clientBrandId: { in: clientBrandIds },
+          status: { in: activeStatuses },
+        },
         select: { id: true, name: true },
         take: 5,
       }),
@@ -224,29 +267,6 @@ export class DashboardService {
         budgetSpent: paidAgg._sum.amount ?? 0,
       },
       recentActivity,
-    };
-  }
-
-  private async getAgencyDashboard(user: any) {
-    const agencyProfileId = user.agencyProfile?.id;
-
-    const activeBriefsCount = agencyProfileId
-      ? await this.prisma.campaign.count({
-          where: {
-            clientBrand: { agencyId: agencyProfileId },
-            status: 'ACTIVE',
-          },
-        })
-      : 0;
-
-    return {
-      role: 'agency',
-      stats: {
-        activeBriefs: activeBriefsCount,
-        creatorsAssigned: 0, // Placeholder
-        spendMTD: 0, // Placeholder
-        slaOnTrack: '100%', // Placeholder
-      },
     };
   }
 }

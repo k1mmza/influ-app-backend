@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConversationsService } from '../conversations/conversations.service';
+import { notify } from '../notifications/notify';
 
 /** Discriminates the outcome of an invite so the frontend can react (toast vs. error). */
 export type InviteResult =
@@ -137,6 +138,7 @@ export class InvitationsService {
         where: { id: existing.id },
         data: { status: 'INVITED', origin: 'INVITATION' },
       });
+      await this.notifyInvited(influencer.userId, campaignId);
       return this.withResult(reinvited, 'RE_INVITED');
     }
 
@@ -148,11 +150,30 @@ export class InvitationsService {
         origin: 'INVITATION',
       },
     });
+    await this.notifyInvited(influencer.userId, campaignId);
     return this.withResult(created, 'INVITED');
   }
 
   private withResult<T>(application: T, inviteResult: InviteResult) {
     return { ...application, inviteResult };
+  }
+
+  /** Notify an invited influencer (best-effort). Pulls the campaign name for a
+   *  friendlier message; a missing name falls back to generic copy. */
+  private async notifyInvited(userId: string | null, campaignId: string) {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { name: true },
+    });
+    await notify(this.prisma, {
+      userId,
+      type: 'CAMPAIGN_INVITATION',
+      title: 'New campaign invitation',
+      body: campaign?.name
+        ? `You've been invited to "${campaign.name}".`
+        : "You've been invited to a campaign.",
+      referenceId: campaignId,
+    });
   }
 
   // ── Influencer → list incoming invitations ─────────────────────────────────

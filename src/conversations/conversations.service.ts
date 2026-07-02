@@ -71,8 +71,23 @@ export class ConversationsService {
       },
     });
 
+    // Unread = messages this user didn't send that aren't marked read yet.
+    // One grouped query for all conversations (not an N+1 per-conversation count).
+    const unreadGroups = await this.prisma.message.groupBy({
+      by: ['conversationId'],
+      where: {
+        conversationId: { in: conversations.map((c) => c.id) },
+        isRead: false,
+        senderId: { not: userId },
+      },
+      _count: { _all: true },
+    });
+    const unreadByConv = new Map(
+      unreadGroups.map((g) => [g.conversationId, g._count._all]),
+    );
+
     return conversations.map((conv) => {
-      const unreadCount = 0; // computed in markAsRead; placeholder here
+      const unreadCount = unreadByConv.get(conv.id) ?? 0;
       return {
         id: conv.id,
         campaignId: conv.campaignId,

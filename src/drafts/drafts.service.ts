@@ -14,6 +14,7 @@ import { UpdateDraftDto } from './dto/update-draft.dto';
 import { ReviewDraftDto } from './dto/review-draft.dto';
 import { parseVideoUrl } from '../sync/video-url';
 import { resolveTikTokShortLink } from '../sync/resolve-short-url';
+import { notify } from '../notifications/notify';
 
 type Participant = {
   role: string;
@@ -147,6 +148,22 @@ export class DraftsService {
       },
     });
     this.chatGateway.emitDraftsUpdate(conversationId);
+
+    // Influencer submitting for review → notify the brand/agency side.
+    if (dto.status === 'SUBMITTED') {
+      const conv = await this.prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: { clientBrand: { include: { brandProfile: true, agency: true } } },
+      });
+      await notify(this.prisma, {
+        userId:
+          conv?.clientBrand?.brandProfile?.userId ?? conv?.clientBrand?.agency?.userId,
+        type: 'DRAFT_SUBMITTED',
+        title: 'New draft submitted',
+        body: `A creator submitted "${draft.title}" for review.`,
+        referenceId: conversationId,
+      });
+    }
     return draft;
   }
 
@@ -221,6 +238,22 @@ export class DraftsService {
     }
 
     this.chatGateway.emitDraftsUpdate(conversationId);
+
+    // Brand/agency reviewed → notify the influencer of the outcome.
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: { influencer: true },
+    });
+    const approved = draft.status === 'APPROVED';
+    await notify(this.prisma, {
+      userId: conv?.influencer?.userId,
+      type: approved ? 'DRAFT_APPROVED' : 'DRAFT_REVISION_REQUESTED',
+      title: approved ? 'Draft approved' : 'Revision requested',
+      body: approved
+        ? `Your draft "${draft.title}" was approved.`
+        : `Changes were requested on "${draft.title}".`,
+      referenceId: conversationId,
+    });
     return draft;
   }
 
