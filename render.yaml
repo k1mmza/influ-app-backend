@@ -21,7 +21,7 @@ services:
   - type: web
     name: influ-app-backend
     runtime: node
-    branch: main
+    branch: deploy
     plan: free                        # SMOKE TEST ONLY. Sleeps when idle; @Cron
                                       # schedulers and preDeployCommand are NOT
                                       # available on free. Do not ship this.
