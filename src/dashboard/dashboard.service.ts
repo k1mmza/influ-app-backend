@@ -202,6 +202,43 @@ export class DashboardService {
       select: { id: true, title: true, body: true, createdAt: true, isRead: true },
     });
 
+    // The ≤5 active campaigns shown on the dashboard card.
+    const activeCampaignRows = await this.prisma.campaign.findMany({
+      where: { clientBrandId: clientBrand.id, status: { in: activeStatuses } },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        budget: true,
+        // Applicant count via _count — single query, no per-campaign fan-out.
+        _count: { select: { applications: true } },
+      },
+      take: 5,
+    });
+
+    // Per-campaign spent = confirmed (PAID) payments grouped by campaign — the
+    // same ledger the dashboard-level budgetSpent uses. The Campaign.budgetSpent
+    // column is never written at runtime (only in seed data), so it can't back
+    // this. Scoped to the shown campaigns; a single groupBy, no N+1.
+    const spentByCampaign = activeCampaignRows.length
+      ? await this.prisma.payment.groupBy({
+          by: ['campaignId'],
+          where: {
+            clientBrandId: clientBrand.id,
+            status: 'PAID',
+            campaignId: { in: activeCampaignRows.map((c) => c.id) },
+          },
+          _sum: { amount: true },
+        })
+      : [];
+    const spentByCampaignId = new Map(
+      spentByCampaign.map((g) => [g.campaignId, g._sum.amount ?? 0]),
+    );
+    const activeCampaignsList = activeCampaignRows.map((c) => ({
+      ...c,
+      budgetSpent: spentByCampaignId.get(c.id) ?? 0,
+    }));
+
     return {
       role: 'brand',
       stats: {
@@ -211,11 +248,7 @@ export class DashboardService {
         avgEngagement: trackingAgg._avg.engagementRate ?? null,
         totalReach: reachAgg._sum.followers ?? 0,
       },
-      activeCampaigns: await this.prisma.campaign.findMany({
-        where: { clientBrandId: clientBrand.id, status: { in: activeStatuses } },
-        select: { id: true, name: true },
-        take: 5,
-      }),
+      activeCampaigns: activeCampaignsList,
       performance: { impressions, engagements },
       payments: {
         paidCount: paidAgg._count,
