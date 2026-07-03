@@ -137,6 +137,8 @@ model InfluencerProfile {
 
 model ClientBrand {
   id             String         @id @default(uuid())
+  // agencyId doubles as the "managed-by agency" FK: when origin = AGENCY_MANAGED
+  // this is the agency that created/owns the unclaimed brand.
   agencyId       String?
   agency         AgencyProfile? @relation(fields: [agencyId], references: [id])
   brandProfileId String?        @unique
@@ -145,7 +147,14 @@ model ClientBrand {
   brandContact   String?
   brandEmail     String?
   brandWebsite   String?
+  logoUrl        String?
+  // Provenance (bare String — matches CampaignApplication.origin, no enum):
+  //   SELF_REGISTERED  brand signed up itself (linked via brandProfileId)
+  //   AGENCY_MANAGED   agency created it inline; no account yet (brandProfileId null)
+  origin         String         @default("SELF_REGISTERED")
   isRegistered   Boolean        @default(false)
+  // TODO(claim-flow): mirror InfluencerProfile.claimed/claimedByUserId here so an
+  // AGENCY_MANAGED brand can later be claimed by a real account (addition-only).
   joinedAt       DateTime       @default(now())
 
   // Relationships

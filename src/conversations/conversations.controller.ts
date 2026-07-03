@@ -44,8 +44,8 @@ export class ConversationsController {
   }
 
   @Get(':id/messages')
-  findMessages(@Param('id') id: string) {
-    return this.conversationsService.findMessages(id);
+  findMessages(@Request() req, @Param('id') id: string) {
+    return this.conversationsService.findMessages(req.user.userId, id);
   }
 
   @Post(':id/messages')
@@ -57,10 +57,8 @@ export class ConversationsController {
     return this.conversationsService.sendMessage(req.user.userId, id, content);
   }
 
-  @Patch(':id/phase')
-  updatePhase(@Param('id') id: string, @Body('workPhase') workPhase: string) {
-    return this.conversationsService.updatePhase(id, workPhase);
-  }
+  // Removed: PATCH /conversations/:id/phase (updatePhase) — unguarded, gate-bypassing
+  // phase set with no consumer. Phase changes go through POST /:id/phase-ready.
 
   @Patch(':id/read')
   markAsRead(@Request() req, @Param('id') id: string) {
@@ -73,13 +71,13 @@ export class ConversationsController {
   }
 
   @Get(':id/brief')
-  getBrief(@Param('id') id: string) {
-    return this.conversationsService.getBrief(id);
+  getBrief(@Request() req, @Param('id') id: string) {
+    return this.conversationsService.getBrief(req.user.userId, id);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.conversationsService.findOne(id);
+  findOne(@Request() req, @Param('id') id: string) {
+    return this.conversationsService.findOne(req.user.userId, id);
   }
 
   @Post(':id/upload')
@@ -109,11 +107,17 @@ export class ConversationsController {
     }),
   )
   uploadFile(
+    @Request() req,
     @Param('id') id: string,
     @Body('type') type: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
     const fileUrl = `/uploads/conversations/${file.filename}`;
-    return this.conversationsService.saveAttachment(id, type, fileUrl);
+    return this.conversationsService.saveAttachment(
+      req.user.userId,
+      id,
+      type,
+      fileUrl,
+    );
   }
 }

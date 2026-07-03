@@ -158,7 +158,13 @@ export class DashboardService {
         },
         activeCampaigns: [],
         performance: { impressions: 0, engagements: 0 },
-        payments: { paidCount: 0, pendingCount: 0, activeBudget: 0, budgetSpent: 0 },
+        payments: {
+          paidCount: 0,
+          pendingCount: 0,
+          activeBudget: 0,
+          budgetSpent: 0,
+          activeBudgetSpent: 0,
+        },
         recentActivity: [],
       };
     }
@@ -176,6 +182,7 @@ export class DashboardService {
       (sum, c) => sum + (c.budget ?? 0),
       0,
     );
+    const activeCampaignIds = activeCampaigns.map((c) => c.id);
 
     // Distinct creators with an accepted application across these campaigns.
     const acceptedApps = await this.prisma.campaignApplication.findMany({
@@ -194,7 +201,12 @@ export class DashboardService {
       : { _sum: { followers: 0 } };
 
     // Real money paid out vs. still pending, from the Payment ledger.
-    const [paidAgg, pendingCount] = await Promise.all([
+    // `paidAgg` is all-time PAID spend for the brand(s) — the "Budget Spent" KPI.
+    // `activeSpentAgg` is PAID spend scoped to the *active* campaigns only, so it
+    // shares activeBudget's scope and the two can be divided into a real % (the
+    // dashboard's "Spent vs Remaining" ratio). Don't mix the two: activeBudget /
+    // budgetSpent are different campaign sets and their ratio is meaningless.
+    const [paidAgg, pendingCount, activeSpentAgg] = await Promise.all([
       this.prisma.payment.aggregate({
         where: { clientBrandId: { in: clientBrandIds }, status: 'PAID' },
         _sum: { amount: true },
@@ -206,6 +218,16 @@ export class DashboardService {
           status: { in: ['PENDING', 'AWAITING_CONFIRMATION'] },
         },
       }),
+      activeCampaignIds.length
+        ? this.prisma.payment.aggregate({
+            where: {
+              clientBrandId: { in: clientBrandIds },
+              status: 'PAID',
+              campaignId: { in: activeCampaignIds },
+            },
+            _sum: { amount: true },
+          })
+        : Promise.resolve({ _sum: { amount: 0 } }),
     ]);
 
     // Live post metrics aggregated from tracking snapshots.
@@ -298,6 +320,8 @@ export class DashboardService {
         pendingCount,
         activeBudget,
         budgetSpent: paidAgg._sum.amount ?? 0,
+        // Scoped to active campaigns — pairs with activeBudget for the % ratio.
+        activeBudgetSpent: activeSpentAgg._sum.amount ?? 0,
       },
       recentActivity,
     };
