@@ -8,13 +8,26 @@
 
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConversationsService } from './conversations.service';
+import { ConversationAccessService } from './conversation-access.service';
 
-function build(conv: any) {
+// Default caller for the getBrief tests: the influencer who owns the conversation
+// (influencerProfile.id === conv.influencerId). Participant check now runs first.
+const INFLUENCER_OWNER = {
+  id: 'u-inf',
+  role: 'INFLUENCER',
+  influencerProfile: { id: 'inf-1' },
+  brandProfile: null,
+  agencyProfile: null,
+};
+
+function build(conv: any, user: any = INFLUENCER_OWNER) {
   const prisma: any = {
+    user: { findUnique: jest.fn().mockResolvedValue(user) },
     conversation: { findUnique: jest.fn().mockResolvedValue(conv) },
   };
   const gateway: any = {};
-  const service = new ConversationsService(prisma, gateway);
+  const access = new ConversationAccessService(prisma);
+  const service = new ConversationsService(prisma, gateway, access);
   return { service, prisma };
 }
 
@@ -30,7 +43,8 @@ function buildPhaseReady(user: any, conv: any) {
     },
   };
   const gateway: any = { emitPhaseUpdate: jest.fn() };
-  const service = new ConversationsService(prisma, gateway);
+  const access = new ConversationAccessService(prisma);
+  const service = new ConversationsService(prisma, gateway, access);
   return { service, prisma, gateway };
 }
 
@@ -38,6 +52,7 @@ describe('ConversationsService.getBrief', () => {
   it('TC-01: joins campaign + requirement + latest smart plan brief', async () => {
     const conv = {
       id: 'conv-1',
+      influencerId: 'inf-1',
       briefFileUrl: '/uploads/conversations/brief.pdf',
       campaign: {
         id: 'camp-1',
@@ -75,7 +90,7 @@ describe('ConversationsService.getBrief', () => {
       },
     };
     const { service } = build(conv);
-    const res = await service.getBrief('conv-1');
+    const res = await service.getBrief('u-inf', 'conv-1');
 
     expect(res.campaign?.name).toBe('Summer Skincare');
     expect(res.campaign?.keyMessage).toBe('Gentle routine');
@@ -88,6 +103,7 @@ describe('ConversationsService.getBrief', () => {
   it('TC-02: returns null requirement/smartPlanBrief when absent', async () => {
     const conv = {
       id: 'conv-2',
+      influencerId: 'inf-1',
       briefFileUrl: null,
       campaign: {
         id: 'camp-2',
@@ -105,7 +121,7 @@ describe('ConversationsService.getBrief', () => {
       },
     };
     const { service } = build(conv);
-    const res = await service.getBrief('conv-2');
+    const res = await service.getBrief('u-inf', 'conv-2');
 
     expect(res.campaign?.name).toBe('Bare Campaign');
     expect(res.requirement).toBeNull();
@@ -115,7 +131,7 @@ describe('ConversationsService.getBrief', () => {
 
   it('TC-03: throws NotFound when the conversation does not exist', async () => {
     const { service } = build(null);
-    await expect(service.getBrief('missing')).rejects.toBeInstanceOf(
+    await expect(service.getBrief('u-inf', 'missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });

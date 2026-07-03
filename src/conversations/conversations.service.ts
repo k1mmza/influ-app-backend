@@ -1,12 +1,12 @@
 import {
   Injectable,
   BadRequestException,
-  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
+import { ConversationAccessService } from './conversation-access.service';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -14,6 +14,7 @@ export class ConversationsService {
   constructor(
     private prisma: PrismaService,
     private chatGateway: ChatGateway,
+    private access: ConversationAccessService,
   ) {}
 
   private async resolveClientBrandId(
@@ -71,8 +72,23 @@ export class ConversationsService {
       },
     });
 
+    // Unread = messages this user didn't send that aren't marked read yet.
+    // One grouped query for all conversations (not an N+1 per-conversation count).
+    const unreadGroups = await this.prisma.message.groupBy({
+      by: ['conversationId'],
+      where: {
+        conversationId: { in: conversations.map((c) => c.id) },
+        isRead: false,
+        senderId: { not: userId },
+      },
+      _count: { _all: true },
+    });
+    const unreadByConv = new Map(
+      unreadGroups.map((g) => [g.conversationId, g._count._all]),
+    );
+
     return conversations.map((conv) => {
-      const unreadCount = 0; // computed in markAsRead; placeholder here
+      const unreadCount = unreadByConv.get(conv.id) ?? 0;
       return {
         id: conv.id,
         campaignId: conv.campaignId,
@@ -122,6 +138,11 @@ export class ConversationsService {
     });
   }
 
+  // TODO(separate ticket): resolveClientBrandId picks the agency's FIRST clientBrand
+  // via findFirst, ignoring the campaign's own clientBrandId. For a multi-brand
+  // agency this can attach the conversation to the wrong brand. Fix by deriving
+  // clientBrandId from the campaign and verifying the agency owns it. Out of scope
+  // for the messaging-authorization pass.
   async createOrFind(userId: string, influencerId: string, campaignId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -152,7 +173,8 @@ export class ConversationsService {
     return this.ensureConversation(influencerId, clientBrandId, campaignId);
   }
 
-  async findMessages(conversationId: string) {
+  async findMessages(userId: string, conversationId: string) {
+    await this.access.resolveParticipant(userId, conversationId);
     return this.prisma.message.findMany({
       where: { conversationId },
       orderBy: { sentAt: 'asc' },
@@ -161,6 +183,7 @@ export class ConversationsService {
   }
 
   async sendMessage(userId: string, conversationId: string, content: string) {
+    await this.access.resolveParticipant(userId, conversationId);
     const msg = await this.prisma.message.create({
       data: {
         id: uuidv4(),
@@ -178,24 +201,22 @@ export class ConversationsService {
     return msg;
   }
 
-  async updatePhase(conversationId: string, workPhase: string) {
-    const valid = ['contact', 'brief', 'draft', 'work', 'payment'];
-    if (!valid.includes(workPhase))
-      throw new BadRequestException('Invalid work phase');
-    return this.prisma.conversation.update({
-      where: { id: conversationId },
-      data: { workPhase, updatedAt: new Date() },
-    });
-  }
+  // NOTE: the former `updatePhase` / `PATCH /conversations/:id/phase` endpoint
+  // was removed — it let any caller jump a conversation to any phase with no
+  // participant check and bypassing the two-sided ready-gate. Phase progression
+  // is driven exclusively by markPhaseReady. Re-add here only with the same
+  // ownership + ready-gate guarantees if a direct-set use case ever appears.
 
   async markAsRead(conversationId: string, userId: string) {
+    await this.access.resolveParticipant(userId, conversationId);
     await this.prisma.message.updateMany({
       where: { conversationId, isRead: false, senderId: { not: userId } },
       data: { isRead: true },
     });
   }
 
-  async findOne(conversationId: string) {
+  async findOne(userId: string, conversationId: string) {
+    await this.access.resolveParticipant(userId, conversationId);
     const conv = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
     });
@@ -216,7 +237,8 @@ export class ConversationsService {
    * and the most recent SmartPlanBrief (if any). Replaces the hardcoded brief seed on the
    * frontend. Returns null fields rather than throwing when a requirement/brief is absent.
    */
-  async getBrief(conversationId: string) {
+  async getBrief(userId: string, conversationId: string) {
+    await this.access.resolveParticipant(userId, conversationId);
     const conv = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
       include: {
@@ -276,40 +298,14 @@ export class ConversationsService {
   }
 
   async markPhaseReady(conversationId: string, userId: string) {
-    const [user, conv] = await Promise.all([
-      this.prisma.user.findUnique({
-        where: { id: userId },
-        include: {
-          influencerProfile: true,
-          brandProfile: true,
-          agencyProfile: true,
-        },
-      }),
-      this.prisma.conversation.findUnique({
-        where: { id: conversationId },
-        include: { clientBrand: true },
-      }),
-    ]);
-    if (!user) throw new NotFoundException('User not found');
-    if (!conv) throw new NotFoundException('Conversation not found');
+    // Participant ownership check (was inline here; now the shared helper — same
+    // logic, still the cross-tenant IDOR guard the spec pins down).
+    const { isInfluencerOwner } = await this.access.resolveParticipant(
+      userId,
+      conversationId,
+    );
 
-    const isInfluencer =
-      user.role === 'INFLUENCER' &&
-      user.influencerProfile?.id === conv.influencerId;
-    // Brand/agency may act only on a conversation under their OWN clientBrand —
-    // mirrors the ownership checks in DraftsService/PaymentsService.resolveParticipant.
-    // (Previously this granted access by role alone → cross-tenant IDOR.)
-    const isBrandSide =
-      (user.role === 'BRAND' &&
-        !!user.brandProfile &&
-        conv.clientBrand?.brandProfileId === user.brandProfile.id) ||
-      (user.role === 'AGENCY' &&
-        !!user.agencyProfile &&
-        conv.clientBrand?.agencyId === user.agencyProfile.id);
-    if (!isInfluencer && !isBrandSide)
-      throw new ForbiddenException('Not a participant in this conversation');
-
-    const updateData: any = isInfluencer
+    const updateData: any = isInfluencerOwner
       ? { influencerPhaseReady: true }
       : { brandPhaseReady: true };
     let updated = await this.prisma.conversation.update({
@@ -348,7 +344,13 @@ export class ConversationsService {
     };
   }
 
-  async saveAttachment(conversationId: string, type: string, fileUrl: string) {
+  async saveAttachment(
+    userId: string,
+    conversationId: string,
+    type: string,
+    fileUrl: string,
+  ) {
+    await this.access.resolveParticipant(userId, conversationId);
     const fieldMap: Record<string, string> = {
       contract: 'contractUrl',
       brief: 'briefFileUrl',

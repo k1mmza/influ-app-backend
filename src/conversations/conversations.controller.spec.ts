@@ -12,7 +12,6 @@ const svc = {
   findOne: jest.fn(),
   findMessages: jest.fn(),
   sendMessage: jest.fn(),
-  updatePhase: jest.fn(),
   markAsRead: jest.fn(),
   markPhaseReady: jest.fn(),
   getBrief: jest.fn(),
@@ -92,7 +91,7 @@ describe('ConversationsController', () => {
         .get('/conversations/conv-1/messages')
         .expect(200);
       expect(res.body).toHaveLength(1);
-      expect(svc.findMessages).toHaveBeenCalledWith('conv-1');
+      expect(svc.findMessages).toHaveBeenCalledWith(TEST_USER_ID, 'conv-1');
     });
   });
 
@@ -108,20 +107,6 @@ describe('ConversationsController', () => {
         'conv-1',
         'Hello',
       );
-    });
-  });
-
-  describe('PATCH /conversations/:id/phase', () => {
-    it('200 updates work phase', async () => {
-      svc.updatePhase.mockResolvedValueOnce({
-        id: 'conv-1',
-        workPhase: 'PRODUCTION',
-      });
-      await request(app.getHttpServer())
-        .patch('/conversations/conv-1/phase')
-        .send({ workPhase: 'PRODUCTION' })
-        .expect(200);
-      expect(svc.updatePhase).toHaveBeenCalledWith('conv-1', 'PRODUCTION');
     });
   });
 
@@ -152,7 +137,7 @@ describe('ConversationsController', () => {
         .get('/conversations/conv-1/brief')
         .expect(200);
       expect(res.body.id).toBe('brief-1');
-      expect(svc.getBrief).toHaveBeenCalledWith('conv-1');
+      expect(svc.getBrief).toHaveBeenCalledWith(TEST_USER_ID, 'conv-1');
     });
   });
 
@@ -170,6 +155,7 @@ describe('ConversationsController', () => {
         .field('type', 'image')
         .expect(201);
       expect(svc.saveAttachment).toHaveBeenCalledWith(
+        TEST_USER_ID,
         'conv-1',
         'image',
         expect.stringContaining('/uploads/conversations/'),

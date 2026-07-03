@@ -85,9 +85,13 @@ export class ProfileController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, file, cb) => {
-          if (!existsSync(AVATAR_DIR))
-            mkdirSync(AVATAR_DIR, { recursive: true });
-          cb(null, AVATAR_DIR);
+          try {
+            if (!existsSync(AVATAR_DIR))
+              mkdirSync(AVATAR_DIR, { recursive: true });
+            cb(null, AVATAR_DIR);
+          } catch (err) {
+            cb(err as Error, AVATAR_DIR);
+          }
         },
         filename: (req, file, cb) => {
           const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
@@ -111,9 +115,13 @@ export class ProfileController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, file, cb) => {
-          if (!existsSync(UPLOAD_DIR))
-            mkdirSync(UPLOAD_DIR, { recursive: true });
-          cb(null, UPLOAD_DIR);
+          try {
+            if (!existsSync(UPLOAD_DIR))
+              mkdirSync(UPLOAD_DIR, { recursive: true });
+            cb(null, UPLOAD_DIR);
+          } catch (err) {
+            cb(err as Error, UPLOAD_DIR);
+          }
         },
         filename: (req, file, cb) => {
           const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;

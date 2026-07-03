@@ -11,7 +11,9 @@ export interface AiChannelAnalysis {
   audienceCountry: string | null;
 }
 
-export const VALID_TAGS = [
+/** Topic/niche categories — the "what the creator is about". A profile's
+ *  `category` and `categories[]` are chosen only from this list. */
+export const CATEGORY_TAGS = [
   'Beauty',
   'Fashion',
   'Fitness',
@@ -29,10 +31,22 @@ export const VALID_TAGS = [
   'DIY',
   'Cooking',
   'Health',
-  'Vlog',
-  'Reviews',
-  'Tutorial',
 ];
+
+/** Content-format styles — the "how the creator presents". `styleTags[]`
+ *  (a.k.a. stylePresent) are chosen only from this list. Kept in sync with the
+ *  frontend's stylePresentOptions. */
+export const STYLE_TAGS = [
+  'Short Story',
+  'Storytelling',
+  'Experiment',
+  'Tutorial',
+  'Review',
+  'Vlog',
+];
+
+/** Union of both lists — for callers that only need "is this a known tag". */
+export const VALID_TAGS = [...CATEGORY_TAGS, ...STYLE_TAGS];
 
 @Injectable()
 export class AiAnalysisService {
@@ -85,8 +99,8 @@ export class AiAnalysisService {
 
     const prompt = `Analyze this YouTube channel and return a JSON object with exactly six fields:
 - "bio": A compelling 1-2 sentence creator description written in third person (max 150 characters)
-- "tags": An array of 2-4 relevant content tags chosen ONLY from this list: ${VALID_TAGS.join(', ')}
-- "category": The single best-fit category chosen ONLY from the same list
+- "tags": An array of 2-4 content STYLE tags chosen ONLY from this list: ${STYLE_TAGS.join(', ')}
+- "category": The single best-fit topic CATEGORY chosen ONLY from this list: ${CATEGORY_TAGS.join(', ')}
 - "audienceGender": Estimated dominant audience gender — must be exactly one of: "Female", "Male", "Mixed"
 - "audienceAgeGroup": Estimated primary audience age group — must be exactly one of: "18-24", "25-34", "35-44", "45+"
 - "audienceCountry": Estimated top audience country as a full English country name (e.g. "United States"), or null if unclear
@@ -124,10 +138,10 @@ Respond with valid JSON only. No markdown fences, no explanation.`;
       const rawTags = Array.isArray(parsed.tags)
         ? (parsed.tags as string[])
         : [];
-      const tags = rawTags.filter((t) => VALID_TAGS.includes(t)).slice(0, 4);
-      const category = VALID_TAGS.includes(parsed.category ?? '')
+      const tags = rawTags.filter((t) => STYLE_TAGS.includes(t)).slice(0, 4);
+      const category = CATEGORY_TAGS.includes(parsed.category ?? '')
         ? parsed.category!
-        : (tags[0] ?? 'Lifestyle');
+        : 'Lifestyle';
 
       const VALID_GENDERS = ['Female', 'Male', 'Mixed'];
       const VALID_AGE_GROUPS = ['18-24', '25-34', '35-44', '45+'];
@@ -180,8 +194,8 @@ Respond with valid JSON only. No markdown fences, no explanation.`;
 
     const prompt = `Analyze this ${platform} creator profile and return a JSON object with exactly six fields:
 - "bio": A compelling 1-2 sentence creator description written in third person (max 150 characters)
-- "tags": An array of 2-4 relevant content tags chosen ONLY from this list: ${VALID_TAGS.join(', ')}
-- "category": The single best-fit category chosen ONLY from the same list
+- "tags": An array of 2-4 content STYLE tags chosen ONLY from this list: ${STYLE_TAGS.join(', ')}
+- "category": The single best-fit topic CATEGORY chosen ONLY from this list: ${CATEGORY_TAGS.join(', ')}
 - "audienceGender": Estimated dominant audience gender — must be exactly one of: "Female", "Male", "Mixed"
 - "audienceAgeGroup": Estimated primary audience age group — must be exactly one of: "18-24", "25-34", "35-44", "45+"
 - "audienceCountry": Estimated top audience country as a full English country name (e.g. "United States"), or null if unclear
@@ -219,10 +233,10 @@ Respond with valid JSON only. No markdown fences, no explanation.`;
       const rawTags = Array.isArray(parsed.tags)
         ? (parsed.tags as string[])
         : [];
-      const tags = rawTags.filter((t) => VALID_TAGS.includes(t)).slice(0, 4);
-      const category = VALID_TAGS.includes(parsed.category ?? '')
+      const tags = rawTags.filter((t) => STYLE_TAGS.includes(t)).slice(0, 4);
+      const category = CATEGORY_TAGS.includes(parsed.category ?? '')
         ? parsed.category!
-        : (tags[0] ?? 'Lifestyle');
+        : 'Lifestyle';
       const VALID_GENDERS = ['Female', 'Male', 'Mixed'];
       const VALID_AGE_GROUPS = ['18-24', '25-34', '35-44', '45+'];
 
@@ -264,8 +278,8 @@ Respond with valid JSON only. No markdown fences, no explanation.`;
     const prompt = `You are extracting fields from an influencer's media kit document. Return ONLY a JSON object with this EXACT shape, no prose, no markdown fences:
 {
   "bio": string | null,                    // short creator description, max 300 chars
-  "categories": string[],                  // ONLY from: ${VALID_TAGS.join(', ')}
-  "styleTags": string[],                   // ONLY from the same list
+  "categories": string[],                  // ONLY from: ${CATEGORY_TAGS.join(', ')}
+  "styleTags": string[],                   // ONLY from: ${STYLE_TAGS.join(', ')}
   "keywords": string[],                    // free-form descriptive keywords
   "hashtags": string[],                    // hashtags, with or without leading #
   "availabilityStatus": string | null,     // e.g. "Available", "Booked until July"

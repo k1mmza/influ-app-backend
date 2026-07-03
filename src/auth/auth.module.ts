@@ -16,5 +16,8 @@ import { GoogleStrategy } from './strategies/google.strategy';
   ],
   providers: [AuthService, JwtStrategy, GoogleStrategy],
   controllers: [AuthController],
+  // Export JwtModule so other modules (e.g. ConversationsModule's ChatGateway)
+  // can reuse the same JwtService/secret to verify tokens on the WS handshake.
+  exports: [JwtModule],
 })
 export class AuthModule {}

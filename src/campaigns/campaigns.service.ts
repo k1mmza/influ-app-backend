@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConversationsService } from '../conversations/conversations.service';
+import { notify } from '../notifications/notify';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 
@@ -461,6 +462,19 @@ export class CampaignsService {
           return [updated, conv];
         },
       );
+
+      // Post-commit, best-effort: tell the influencer their application was accepted.
+      const influencer = await this.prisma.influencerProfile.findUnique({
+        where: { id: application.influencerId },
+        select: { userId: true },
+      });
+      await notify(this.prisma, {
+        userId: influencer?.userId,
+        type: 'APPLICATION_ACCEPTED',
+        title: 'Application accepted',
+        body: `Your application to "${campaign.name}" was accepted.`,
+        referenceId: campaignId,
+      });
 
       return { ...updatedApplication, conversationId: conversation.id };
     }

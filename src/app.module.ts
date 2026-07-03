@@ -18,6 +18,7 @@ import { InvitationsModule } from './invitations/invitations.module';
 import { DraftsModule } from './drafts/drafts.module';
 import { PaymentsModule } from './payments/payments.module';
 import { TrackingModule } from './tracking/tracking.module';
+import { ClientBrandsModule } from './client-brands/client-brands.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { TrackingModule } from './tracking/tracking.module';
     DraftsModule,
     PaymentsModule,
     TrackingModule,
+    ClientBrandsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

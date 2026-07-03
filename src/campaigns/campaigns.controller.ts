@@ -67,8 +67,13 @@ export class CampaignsController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, file, cb) => {
-          if (!existsSync(COVER_DIR)) mkdirSync(COVER_DIR, { recursive: true });
-          cb(null, COVER_DIR);
+          try {
+            if (!existsSync(COVER_DIR))
+              mkdirSync(COVER_DIR, { recursive: true });
+            cb(null, COVER_DIR);
+          } catch (err) {
+            cb(err as Error, COVER_DIR);
+          }
         },
         filename: (req, file, cb) => {
           const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;

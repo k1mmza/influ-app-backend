@@ -28,7 +28,6 @@ import { ReviewDraftDto } from './dto/review-draft.dto';
 // so draft files are served via /uploads (Phase 1 URL fix applies unchanged).
 const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
 const UPLOAD_DIR = `${BASE}/conversations`;
-if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 @Controller('conversations/:id/drafts')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -98,7 +97,15 @@ export class DraftsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+        destination: (req, file, cb) => {
+          try {
+            if (!existsSync(UPLOAD_DIR))
+              mkdirSync(UPLOAD_DIR, { recursive: true });
+            cb(null, UPLOAD_DIR);
+          } catch (err) {
+            cb(err as Error, UPLOAD_DIR);
+          }
+        },
         filename: (req, file, cb) =>
           cb(
             null,

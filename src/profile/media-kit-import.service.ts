@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import pdfParse from 'pdf-parse';
 import {
   AiAnalysisService,
-  VALID_TAGS,
+  CATEGORY_TAGS,
+  STYLE_TAGS,
 } from '../influencers/ai-analysis.service';
 
 /**
@@ -253,11 +254,13 @@ export class MediaKitImportService {
         'niches',
         'verticals',
       ]),
+      CATEGORY_TAGS,
     );
     if (categories.length) proposed.categories = categories;
 
     const styleTags = normalizeTags(
       pickArrayish(lower, ['styletags', 'style_tags', 'tags', 'contentstyle']),
+      STYLE_TAGS,
     );
     if (styleTags.length) proposed.styleTags = styleTags;
 
@@ -464,9 +467,9 @@ function stringArray(v: unknown): string[] {
   return [];
 }
 
-/** Constrain free tags to the predefined VALID_TAGS list (case-insensitive). */
-function normalizeTags(v: unknown): string[] {
-  const canon = new Map(VALID_TAGS.map((t) => [t.toLowerCase(), t]));
+/** Constrain free tags to a predefined allowed list (case-insensitive). */
+function normalizeTags(v: unknown, allowed: string[]): string[] {
+  const canon = new Map(allowed.map((t) => [t.toLowerCase(), t]));
   const out: string[] = [];
   for (const raw of stringArray(v)) {
     const hit = canon.get(raw.toLowerCase());
