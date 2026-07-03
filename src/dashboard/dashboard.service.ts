@@ -83,6 +83,21 @@ export class DashboardService {
         platformAccounts.length
       : null;
 
+    const recommendedCampaigns = await this.getRecommendedCampaigns(
+      influencerId,
+      user.influencerProfile?.categories,
+    );
+
+    // Recent Activity — same Notification feed the brand dashboard uses. The
+    // influencer-facing rows are written by notify() on draft review, invitation,
+    // and application-accept events.
+    const recentActivity = await this.prisma.notification.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { id: true, title: true, body: true, createdAt: true, isRead: true },
+    });
+
     return {
       role: 'influencer',
       stats: {
@@ -98,12 +113,84 @@ export class DashboardService {
         totalEarned: user.wallet?.totalEarned ?? 0,
         pendingPayout: user.wallet?.pendingPayout ?? 0,
       },
-      recommendedCampaigns: await this.prisma.campaign.findMany({
-        take: 2,
-        where: { status: 'PUBLIC' },
-        include: { clientBrand: true },
-      }),
+      recommendedCampaigns,
+      recentActivity,
     };
+  }
+
+  /**
+   * Real recommendations for an influencer: PUBLIC campaigns they have NOT already
+   * applied to, ranked by how well the campaign's required categories overlap the
+   * influencer's own categories, then by soonest deadline. Replaces the old
+   * "first 2 PUBLIC campaigns" placeholder.
+   */
+  private async getRecommendedCampaigns(
+    influencerId: string | undefined,
+    influencerCategoriesRaw: unknown,
+  ) {
+    if (!influencerId) return [];
+
+    const applied = await this.prisma.campaignApplication.findMany({
+      where: { influencerId },
+      select: { campaignId: true },
+    });
+    const appliedIds = applied.map((a) => a.campaignId);
+
+    // Pool of eligible campaigns (not applied to), soonest-deadline first. We
+    // over-fetch a small pool and re-rank by category overlap in JS — Json array
+    // overlap isn't cleanly expressible in a Prisma where-filter.
+    const pool = await this.prisma.campaign.findMany({
+      // Same eligibility as getPublicCampaigns/applyToCampaign: publicly visible,
+      // live, not deleted. NOTE: 'PUBLIC' is the *visibility* field — filtering by
+      // status:'PUBLIC' (as the old placeholder did) matches nothing.
+      where: {
+        visibility: 'PUBLIC',
+        status: { in: ['ACTIVE', 'PUBLIC'] },
+        deletedAt: null,
+        id: appliedIds.length ? { notIn: appliedIds } : undefined,
+      },
+      orderBy: { applyDeadline: { sort: 'asc', nulls: 'last' } },
+      take: 12,
+      include: {
+        clientBrand: { select: { brandName: true } },
+        requirements: { select: { categories: true, platforms: true } },
+      },
+    });
+
+    const influencerCategories = this.toLowerStringArray(influencerCategoriesRaw);
+
+    const ranked = pool
+      .map((c) => {
+        const reqCategories = this.toLowerStringArray(
+          c.requirements?.[0]?.categories,
+        );
+        const overlap = reqCategories.filter((cat) =>
+          influencerCategories.includes(cat),
+        ).length;
+        const platforms = this.toStringArray(c.requirements?.[0]?.platforms);
+        return {
+          id: c.id,
+          name: c.name,
+          budget: c.budget,
+          applyDeadline: c.applyDeadline,
+          clientBrand: c.clientBrand,
+          platform: platforms[0] ?? null,
+          _overlap: overlap,
+        };
+      })
+      // Higher category overlap first; deadline order preserved within a tier
+      // because the pool was already deadline-sorted (stable sort).
+      .sort((a, b) => b._overlap - a._overlap);
+
+    return ranked.slice(0, 4).map(({ _overlap, ...c }) => c);
+  }
+
+  private toStringArray(raw: unknown): string[] {
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  }
+
+  private toLowerStringArray(raw: unknown): string[] {
+    return this.toStringArray(raw).map((s) => s.toLowerCase());
   }
 
   private async getBrandDashboard(user: any) {
