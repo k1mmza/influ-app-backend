@@ -51,6 +51,14 @@ export class TrackingController {
     return this.tracking.getDetail(req.user.userId, campaignId);
   }
 
+  // Client-facing presentation report for one campaign. Distinct path depth from
+  // :campaignId above, so no route ambiguity. Same JwtAuthGuard as the rest —
+  // the public "Share Report" link is a separate, not-yet-built epic.
+  @Get(':campaignId/report')
+  getReport(@Request() req: any, @Param('campaignId') campaignId: string) {
+    return this.tracking.getReport(req.user.userId, campaignId);
+  }
+
   @Post(':campaignId/results')
   recordResult(
     @Request() req: any,

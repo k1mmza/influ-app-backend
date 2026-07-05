@@ -36,6 +36,38 @@ export class TrackingService {
     return out;
   }
 
+  /**
+   * Content-level platform, derived from the published contentUrl itself (never
+   * the influencer's primary account, which can differ from where a given post
+   * lives). parseVideoUrl authoritatively classifies YouTube/TikTok — including
+   * TikTok short links, which still carry platform:'tiktok' even before the id
+   * is resolved. For hosts it doesn't cover (e.g. Instagram), fall back to a
+   * minimal hostname check so real posts aren't left blank. Unknown/unparseable
+   * → null: an honest blank, never a misattributed platform.
+   */
+  private contentPlatform(contentUrl: string | null): string | null {
+    if (!contentUrl) return null;
+    // Authoritative when the URL carries a valid, sync-able video id.
+    const parsed = parseVideoUrl(contentUrl);
+    if (parsed) return parsed.platform;
+    // parseVideoUrl is strict — it validates the video id for the sync pipeline,
+    // so it rejects profile links or malformed ids even when the host makes the
+    // platform obvious. For platform LABELLING we only need the host, so fall
+    // back to a hostname check across the platforms the app uses. Unknown → null
+    // (honest blank, never a misattribution).
+    try {
+      const host = new URL(contentUrl).hostname
+        .replace(/^www\./, '')
+        .toLowerCase();
+      if (host === 'youtu.be' || host.endsWith('youtube.com')) return 'youtube';
+      if (host.endsWith('tiktok.com')) return 'tiktok';
+      if (host.endsWith('instagram.com')) return 'instagram';
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Top table: every campaign the user owns + rolled-up performance. */
   async getSummary(userId: string) {
     const campaigns = await this.campaigns.getCampaignsForUser(userId);
@@ -117,6 +149,179 @@ export class TrackingService {
         recordedAt: r.recordedAt,
       };
     });
+  }
+
+  /**
+   * Client-facing campaign report (premium presentation page). Composes, in one
+   * payload, everything the report page needs — reusing latestPerContent and the
+   * same rollup math as getSummary WITHOUT forking it:
+   *  - progress:  accepted deliverable slots vs. approved (published) content
+   *  - summary:   total views + avg ER over SYNCED content (getSummary's math)
+   *  - content[]: every SubmittedContent for the campaign, LEFT-joined to its
+   *               latest TrackingResult snapshot (snap == null => not yet synced)
+   *  - lastUpdated: most recent snapshot across the campaign, or null
+   *
+   * Growth % is intentionally omitted here and everywhere on the report: no
+   * follower-history / delta tracking exists in this codebase, so any growth
+   * number would be seeded-fake or 0. Pending a Phase 2 follow-up feature.
+   */
+  async getReport(userId: string, campaignId: string) {
+    // Ownership + existence (throws NotFound if the user doesn't own it). Reuse
+    // the returned campaign for name/status AND the accepted-slots count —
+    // getCampaign already includes `applications`, so no extra query.
+    const campaign = await this.campaigns.getCampaign(userId, campaignId);
+
+    // Total Deliverables = ACCEPTED applications/invitations. An accepted invite
+    // also terminates in status 'ACCEPTED', so this counts confirmed influencer
+    // slots for either origin. This is the honest "target" (Campaign has no
+    // stored target field) — deliberately NOT getSummary's influencerCount,
+    // which counts influencers that already have tracking data. Matches the
+    // ACCEPTED-count pattern used in dashboard.service.
+    const totalDeliverables = campaign.applications.filter(
+      (a) => a.status === 'ACCEPTED',
+    ).length;
+
+    // Every submitted content for this campaign (any review status) so the
+    // report can render workflow status badges and "not yet synced" rows.
+    const contents = await this.prisma.submittedContent.findMany({
+      where: { application: { campaignId } },
+      include: {
+        application: {
+          select: {
+            influencer: {
+              select: { user: { select: { name: true } } },
+            },
+          },
+        },
+      },
+      orderBy: { reviewedAt: 'desc' },
+    });
+
+    // Latest snapshot per content. Ordered recordedAt desc so latestPerContent's
+    // first-seen-wins dedup returns the newest, and snapshots[0] is the global
+    // most-recent (drives lastUpdated).
+    const snapshots = await this.prisma.trackingResult.findMany({
+      where: { campaignId },
+      orderBy: { recordedAt: 'desc' },
+      select: {
+        submittedContentId: true,
+        views: true,
+        likes: true,
+        comments: true,
+        shares: true,
+        engagementRate: true,
+        recordedAt: true,
+      },
+    });
+    const synced = this.latestPerContent(snapshots);
+    const byContent = new Map(synced.map((s) => [s.submittedContentId, s]));
+
+    // Published = approved content. Rollup + averages over SYNCED content only,
+    // mirroring getSummary (which aggregates the latest snapshot per content).
+    const published = contents.filter(
+      (c) => c.reviewStatus === 'APPROVED',
+    ).length;
+    const totalViews = synced.reduce((s, r) => s + r.views, 0);
+    const sumEr = synced.reduce((s, r) => s + r.engagementRate, 0);
+    const avgViews = synced.length ? totalViews / synced.length : 0;
+    const avgErRaw = synced.length ? sumEr / synced.length : 0;
+    // Rounded for display; badge comparisons use the unrounded avgErRaw.
+    const avgEngagementRate = Number(avgErRaw.toFixed(1));
+
+    // Badge thresholds — a REASONABLE DEFAULT, not a precise spec: compare each
+    // synced item to the campaign's own averages. 'trending' = views above avg;
+    // 'high_engagement' = ER above avg; 'above_average' = above on BOTH (emitted
+    // alone to avoid three-badge noise).
+    //
+    // Suppressed entirely below MIN_FOR_BADGES synced items: with a single item
+    // avg === value, so `> avg` never fires and `>= avg` always fires — the
+    // badge would be meaningless either way.
+    const MIN_FOR_BADGES = 2;
+    const badgesEnabled = synced.length >= MIN_FOR_BADGES;
+
+    const lastUpdated = snapshots.length ? snapshots[0].recordedAt : null;
+
+    const content = contents.map((c) => {
+      // Platform is CONTENT-level metadata: derive it from the post URL itself,
+      // not the influencer's primary account (a creator's primary platform can
+      // differ from where THIS post lives — using the account would misattribute
+      // real content). See contentPlatform().
+      const platform = this.contentPlatform(c.contentUrl);
+      const snap = byContent.get(c.id) ?? null;
+
+      let badges: string[] = [];
+      if (badgesEnabled && snap) {
+        const trending = snap.views > avgViews;
+        const highEngagement = snap.engagementRate > avgErRaw;
+        if (trending && highEngagement) {
+          badges = ['above_average'];
+        } else if (trending) {
+          badges = ['trending'];
+        } else if (highEngagement) {
+          badges = ['high_engagement'];
+        }
+      }
+
+      return {
+        id: c.id,
+        influencerName: c.application?.influencer?.user?.name ?? 'Unknown',
+        platform,
+        contentType: c.contentType,
+        contentUrl: c.contentUrl,
+        // Raw workflow status; the UI maps it to Published/Reviewing/Draft.
+        // No "Scheduled" — no such state exists in this codebase (adjustment #9:
+        // derive from existing status, don't invent).
+        status: c.reviewStatus,
+        // reviewedAt = when the brand APPROVED. The UI labels this "Approved",
+        // NOT "Published": no true on-platform publish date is captured today.
+        // TODO(phase2): capture real publish date from the YouTube/TikTok API
+        // responses already fetched during sync.
+        approvedAt: c.reviewedAt,
+        submittedAt: c.submittedAt,
+        synced: snap != null,
+        // null (not 0) when unsynced so the UI shows "Not yet synced" rather
+        // than a fabricated zero.
+        views: snap?.views ?? null,
+        likes: snap?.likes ?? null,
+        comments: snap?.comments ?? null,
+        shares: snap?.shares ?? null,
+        engagementRate: snap?.engagementRate ?? null,
+        recordedAt: snap?.recordedAt ?? null,
+        badges,
+      };
+    });
+
+    const remaining = Math.max(0, totalDeliverables - published);
+    // Clamp to [0,100]: one accepted influencer can publish MULTIPLE approved
+    // posts, so published can exceed the accepted-slot count (deliverables) and
+    // a raw ratio would read >100%. published/totalDeliverables stay raw for
+    // transparency; only the completion percentage is capped for a sane bar.
+    const pctComplete =
+      totalDeliverables > 0
+        ? Math.min(100, Math.round((published / totalDeliverables) * 100))
+        : 0;
+
+    return {
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        status: campaign.status,
+        // Brand identity for the presentation header (real data via clientBrand).
+        // logoUrl may be null — the UI falls back to brand initials, never a
+        // broken <img>.
+        brandName: campaign.clientBrand?.brandName ?? null,
+        brandLogoUrl: campaign.clientBrand?.logoUrl ?? null,
+        // "Campaign Duration" has no dedicated start/end fields. Use createdAt as
+        // the honest start and submissionDate (planned content due date) as the
+        // end when present; both are real. UI shows a range or "ongoing".
+        startedAt: campaign.createdAt ?? null,
+        submissionDate: campaign.submissionDate ?? null,
+      },
+      progress: { totalDeliverables, published, remaining, pctComplete },
+      summary: { totalViews, avgEngagementRate, publishedPosts: published },
+      lastUpdated,
+      content,
+    };
   }
 
   /** Record a new performance snapshot for a piece of submitted content. */
