@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
@@ -66,5 +67,30 @@ export class TrackingController {
     @Body() dto: RecordResultDto,
   ) {
     return this.tracking.recordResult(req.user.userId, campaignId, dto);
+  }
+
+  // ── Public "Share Report" link management (owner-only; the token they mint is
+  // consumed by the UNGUARDED PublicTrackingController). Distinct path depths
+  // from the report/results routes above, so no route ambiguity. ──────────────
+
+  /** Mint a new public share link for this campaign. */
+  @Post(':campaignId/share')
+  createShareLink(
+    @Request() req: any,
+    @Param('campaignId') campaignId: string,
+  ) {
+    return this.tracking.createShareLink(req.user.userId, campaignId);
+  }
+
+  /** List the campaign's currently active (non-revoked, non-expired) links. */
+  @Get(':campaignId/share')
+  listShareLinks(@Request() req: any, @Param('campaignId') campaignId: string) {
+    return this.tracking.listShareLinks(req.user.userId, campaignId);
+  }
+
+  /** Revoke a single link by id (kills just that URL). */
+  @Delete('share/:linkId')
+  revokeShareLink(@Request() req: any, @Param('linkId') linkId: string) {
+    return this.tracking.revokeShareLink(req.user.userId, linkId);
   }
 }

@@ -52,6 +52,7 @@ model User {
   sentReviews      Review[]       @relation("ReviewsFrom")
   receivedReviews  Review[]       @relation("ReviewsTo")
   messages         Message[]
+  trackingShareLinks TrackingShareLink[]
 }
 
 model BrandProfile {
@@ -351,6 +352,7 @@ model Campaign {
   applications       CampaignApplication[]
   smartPlanBriefs    SmartPlanBrief[]
   trackingResults    TrackingResult[]
+  trackingShareLinks TrackingShareLink[]
   reviews            Review[]
   pastCollaborations PastCollaboration[]
   conversations      Conversation[]
@@ -431,6 +433,26 @@ model TrackingResult {
   // recordedAt to 00:00:00Z so the key is stable within a day (createdAt is not
   // tracked here — recordedAt carries the day; real write time is row insert).
   @@unique([submittedContentId, recordedAt, snapshotPeriod])
+}
+
+// A public, account-less share link for a campaign's tracking report. The random
+// `token` (never the campaign id) is the URL key. Multiple links per campaign are
+// allowed and each is independently revocable, so a leaked link can be killed
+// without breaking others already handed out. A link is USABLE only while
+// revokedAt == null AND (expiresAt == null || expiresAt > now).
+model TrackingShareLink {
+  id           String    @id @default(uuid())
+  token        String    @unique // crypto-random URL key (base64url)
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User      @relation(fields: [createdById], references: [id])
+  revokedAt    DateTime? // null = active
+  expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
+  lastViewedAt DateTime? // best-effort last public open; cheap usage signal
+  createdAt    DateTime  @default(now())
+
+  @@index([campaignId])
 }
 
 model Shortlist {

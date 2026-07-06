@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { YouTubeStrategy } from '../platform-connect/strategies/youtube.strategy';
@@ -166,10 +167,31 @@ export class TrackingService {
    * number would be seeded-fake or 0. Pending a Phase 2 follow-up feature.
    */
   async getReport(userId: string, campaignId: string) {
-    // Ownership + existence (throws NotFound if the user doesn't own it). Reuse
-    // the returned campaign for name/status AND the accepted-slots count —
-    // getCampaign already includes `applications`, so no extra query.
+    // Ownership + existence (throws NotFound if the user doesn't own it).
     const campaign = await this.campaigns.getCampaign(userId, campaignId);
+    return this.buildReport(campaign);
+  }
+
+  /**
+   * Pure report aggregation for one campaign — performs NO authorization. Every
+   * caller MUST gate access first: getReport() does owner ownership via
+   * getCampaign(); getPublicReport() validates a share token. Kept as a single
+   * builder so the authenticated and public report paths never fork the
+   * query/rollup logic — the public path only re-shapes the OUTPUT (allowlist).
+   *
+   * Typed against the minimal structural shape it reads, so both getCampaign()'s
+   * result and the leaner public-path findUnique are assignable without coupling.
+   */
+  private async buildReport(campaign: {
+    id: string;
+    name: string;
+    status: string;
+    createdAt: Date | null;
+    submissionDate: Date | null;
+    clientBrand: { brandName: string | null; logoUrl: string | null } | null;
+    applications: { status: string }[];
+  }) {
+    const campaignId = campaign.id;
 
     // Total Deliverables = ACCEPTED applications/invitations. An accepted invite
     // also terminates in status 'ACCEPTED', so this counts confirmed influencer
@@ -326,6 +348,164 @@ export class TrackingService {
       summary: { totalViews, avgEngagementRate, publishedPosts: published },
       lastUpdated,
       content,
+    };
+  }
+
+  // ── Public "Share Report" links ───────────────────────────────────────────
+  //
+  // A share link is an account-less, public URL keyed by a crypto-random token
+  // (never the campaign id). Multiple links per campaign are allowed and each is
+  // independently revocable, so a leaked link can be killed without breaking
+  // others already handed out. Links carry a finite expiry (SHARE_LINK_TTL_DAYS)
+  // — this is the app's first unauthenticated surface, and nothing else reminds
+  // anyone a link exists, so they lapse on their own; regenerate to extend.
+
+  /** Days a new share link stays valid before auto-expiring. */
+  private static readonly SHARE_LINK_TTL_DAYS = 90;
+
+  private shareLinkDto(link: {
+    id: string;
+    token: string;
+    expiresAt: Date | null;
+    lastViewedAt: Date | null;
+    createdAt: Date;
+  }) {
+    // No URL is built here — the frontend composes it from its own origin, so the
+    // backend never needs to know the public site URL.
+    return {
+      id: link.id,
+      token: link.token,
+      expiresAt: link.expiresAt,
+      lastViewedAt: link.lastViewedAt,
+      createdAt: link.createdAt,
+    };
+  }
+
+  /** Create a public share link. Owner-only — reuses getCampaign's ownership
+   *  gate (throws NotFound/Forbidden for non-owners, incl. agency-managed). */
+  async createShareLink(userId: string, campaignId: string) {
+    await this.campaigns.getCampaign(userId, campaignId);
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(
+      Date.now() + TrackingService.SHARE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const link = await this.prisma.trackingShareLink.create({
+      data: { token, campaignId, createdById: userId, expiresAt },
+    });
+    return this.shareLinkDto(link);
+  }
+
+  /** Active (non-revoked, non-expired) links for a campaign the user owns. */
+  async listShareLinks(userId: string, campaignId: string) {
+    await this.campaigns.getCampaign(userId, campaignId);
+    const now = new Date();
+    const links = await this.prisma.trackingShareLink.findMany({
+      where: {
+        campaignId,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return links.map((l) => this.shareLinkDto(l));
+  }
+
+  /** Revoke one link (kills just that URL). Ownership re-checked via the link's
+   *  own campaign, so a user can only revoke links on campaigns they own. */
+  async revokeShareLink(userId: string, linkId: string) {
+    const link = await this.prisma.trackingShareLink.findUnique({
+      where: { id: linkId },
+    });
+    if (!link) throw new NotFoundException('Share link not found');
+    await this.campaigns.getCampaign(userId, link.campaignId);
+    await this.prisma.trackingShareLink.update({
+      where: { id: linkId },
+      data: { revokedAt: new Date() },
+    });
+    return { revoked: true };
+  }
+
+  /**
+   * Public, UNAUTHENTICATED report for a share token. Validates the token is
+   * active (revoked/expired/unknown all collapse to the SAME 404 — never reveal
+   * whether a campaign exists), then reuses buildReport() and returns the
+   * explicit public allowlist DTO. A future field added to buildReport cannot
+   * leak here unless someone edits publicReportDto by hand.
+   */
+  async getPublicReport(token: string) {
+    const link = await this.prisma.trackingShareLink.findUnique({
+      where: { token },
+    });
+    const now = new Date();
+    const active =
+      link &&
+      link.revokedAt === null &&
+      (link.expiresAt === null || link.expiresAt > now);
+    if (!active) {
+      throw new NotFoundException('This report link is no longer available');
+    }
+
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: link.campaignId, deletedAt: null },
+      include: { applications: true, clientBrand: true },
+    });
+    if (!campaign) {
+      throw new NotFoundException('This report link is no longer available');
+    }
+
+    // Best-effort usage signal — must never block or fail the response.
+    void this.prisma.trackingShareLink
+      .update({ where: { id: link.id }, data: { lastViewedAt: now } })
+      .catch(() => undefined);
+
+    const report = await this.buildReport(campaign);
+    return this.publicReportDto(report);
+  }
+
+  /**
+   * Explicit public allowlist. Built by NAMING every field that ships, not by
+   * deleting keys off the internal report — so the presentation-safe surface is
+   * a deliberate whitelist. Excludes: campaign id, any budget/payment fields,
+   * influencer contact info, and internal workflow states. Per the product
+   * decision, content is PUBLISHED-ONLY and drops status/submittedAt while
+   * keeping publishedAt + approvedAt (the report's publish-date fallback logic).
+   */
+  private publicReportDto(
+    report: Awaited<ReturnType<TrackingService['buildReport']>>,
+  ) {
+    return {
+      campaign: {
+        name: report.campaign.name,
+        status: report.campaign.status,
+        brandName: report.campaign.brandName,
+        brandLogoUrl: report.campaign.brandLogoUrl,
+        startedAt: report.campaign.startedAt,
+        submissionDate: report.campaign.submissionDate,
+      },
+      progress: report.progress,
+      summary: report.summary,
+      lastUpdated: report.lastUpdated,
+      content: report.content
+        .filter((c) => c.status === 'APPROVED')
+        .map((c) => ({
+          id: c.id,
+          influencerName: c.influencerName,
+          platform: c.platform,
+          contentType: c.contentType,
+          contentUrl: c.contentUrl,
+          title: c.title,
+          thumbnailUrl: c.thumbnailUrl,
+          publishedAt: c.publishedAt,
+          approvedAt: c.approvedAt,
+          synced: c.synced,
+          views: c.views,
+          likes: c.likes,
+          comments: c.comments,
+          shares: c.shares,
+          engagementRate: c.engagementRate,
+          recordedAt: c.recordedAt,
+          badges: c.badges,
+        })),
     };
   }
 
