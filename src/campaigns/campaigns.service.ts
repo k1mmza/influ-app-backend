@@ -184,6 +184,75 @@ export class CampaignsService {
       }
     }
 
+    // COMMERCIAL-TERM LOCK
+    // Once a campaign has ≥1 ACCEPTED application (from either an APPLICATION or
+    // INVITATION origin — both terminate at status 'ACCEPTED'), its commercial
+    // terms are frozen so they can't be changed out from under confirmed creators
+    // (and to keep downstream budget/deliverable math consistent). This is keyed
+    // off the ACCEPTED count, NOT Campaign.status, because an invite can be
+    // accepted while the campaign is still DRAFT.
+    const acceptedCount = await this.prisma.campaignApplication.count({
+      where: { campaignId, status: 'ACCEPTED' },
+    });
+    if (acceptedCount > 0) {
+      const violations: string[] = [];
+
+      // LOCK bucket: reject any scalar term whose incoming value differs from the
+      // stored value. Present-but-unchanged is fine (not a change).
+      if (dto.budget !== undefined && dto.budget !== campaign.budget) {
+        violations.push('budget');
+      }
+      if (
+        dto.paymentType !== undefined &&
+        dto.paymentType !== campaign.paymentType
+      ) {
+        violations.push('paymentType');
+      }
+      if (
+        dto.deliverables !== undefined &&
+        dto.deliverables !== campaign.deliverables
+      ) {
+        violations.push('deliverables');
+      }
+      if (
+        dto.clientBrandId !== undefined &&
+        dto.clientBrandId !== campaign.clientBrandId
+      ) {
+        violations.push('clientBrandId');
+      }
+
+      // requirements[] is a destructive delete-and-recreate — treat any attempt
+      // to send it as a single violation rather than diffing the array.
+      if (dto.requirements !== undefined) {
+        violations.push('requirements');
+      }
+
+      // EXTEND-ONLY bucket: dates may move later, never earlier. Setting a date
+      // where none existed is allowed (extending from nothing).
+      const extendOnly: Array<[keyof UpdateCampaignDto, Date | null]> = [
+        ['applyDeadline', campaign.applyDeadline],
+        ['submissionDate', campaign.submissionDate],
+        ['reviewDate', campaign.reviewDate],
+        ['paymentDate', campaign.paymentDate],
+      ];
+      for (const [field, current] of extendOnly) {
+        const raw = dto[field] as string | undefined;
+        if (raw === undefined) continue;
+        const next = new Date(raw);
+        if (current && next.getTime() < current.getTime()) {
+          violations.push(field);
+        }
+      }
+
+      // Reject the whole PATCH atomically — never apply the always-free fields
+      // from a request that also tried to touch a locked field.
+      if (violations.length) {
+        throw new BadRequestException(
+          `Cannot change ${violations.join(', ')}: campaign has accepted creators`,
+        );
+      }
+    }
+
     const updateData: any = {
       name: dto.name,
       objective: dto.objective,

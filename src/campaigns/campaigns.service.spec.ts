@@ -681,6 +681,211 @@ describe('CampaignsService.getApplications', () => {
 });
 
 // ---------------------------------------------------------------------------
+// updateCampaign — commercial-term lock (≥1 ACCEPTED application)
+// ---------------------------------------------------------------------------
+
+describe('CampaignsService.updateCampaign — commercial-term lock', () => {
+  // Build a prisma mock wired for updateCampaign: ownership passes (bp-1),
+  // ACCEPTED count is configurable, and campaign.update echoes the merged row.
+  function buildUpdatePrisma(campaign: any, acceptedCount: number) {
+    const prisma = buildPrisma();
+    prisma.user.findUnique.mockResolvedValue(makeUser());
+    prisma.campaign.findUnique.mockResolvedValue(campaign);
+    prisma.campaignApplication.count = jest
+      .fn()
+      .mockResolvedValue(acceptedCount);
+    prisma.campaign.update.mockImplementation(async ({ data }: any) => ({
+      ...campaign,
+      ...data,
+    }));
+    return prisma;
+  }
+
+  const call = (prisma: any, dto: any) => {
+    const service = new CampaignsService(prisma, makeConvService(prisma));
+    return service.updateCampaign('user-brand-1', 'campaign-1', dto);
+  };
+
+  // -----------------------------------------------------------------------
+  // Passthrough: 0 accepted applications — every field editable
+  // -----------------------------------------------------------------------
+  it('0 accepted → all fields editable (passthrough, no restrictions)', async () => {
+    const campaign = makeCampaign({
+      budget: 1000,
+      paymentType: 'FIXED',
+      deliverables: 'One reel',
+      clientBrandId: 'cb-1',
+      applyDeadline: new Date('2026-06-01'),
+    });
+    const prisma = buildUpdatePrisma(campaign, 0);
+
+    await expect(
+      call(prisma, {
+        budget: 5000,
+        paymentType: 'PERFORMANCE',
+        deliverables: 'Three reels',
+        applyDeadline: '2026-01-01', // even a shorten is allowed at 0 accepted
+      }),
+    ).resolves.toBeDefined();
+
+    expect(prisma.campaignApplication.count).toHaveBeenCalledWith({
+      where: { campaignId: 'campaign-1', status: 'ACCEPTED' },
+    });
+    expect(prisma.campaign.update).toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // LOCK bucket: a changed value with count>0 is rejected
+  // -----------------------------------------------------------------------
+  it('locks budget once an application is accepted', async () => {
+    const campaign = makeCampaign({ budget: 1000 });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(call(prisma, { budget: 2000 })).rejects.toThrow(
+      /Cannot change budget/,
+    );
+    expect(prisma.campaign.update).not.toHaveBeenCalled();
+  });
+
+  it('locks paymentType, deliverables and clientBrandId once accepted', async () => {
+    const campaign = makeCampaign({
+      paymentType: 'FIXED',
+      deliverables: 'One reel',
+      clientBrandId: 'cb-1',
+    });
+
+    await expect(
+      call(buildUpdatePrisma(campaign, 1), { paymentType: 'PERFORMANCE' }),
+    ).rejects.toThrow(/Cannot change paymentType/);
+    await expect(
+      call(buildUpdatePrisma(campaign, 1), { deliverables: 'Two reels' }),
+    ).rejects.toThrow(/Cannot change deliverables/);
+    await expect(
+      call(buildUpdatePrisma(campaign, 1), { clientBrandId: 'cb-2' }),
+    ).rejects.toThrow(/Cannot change clientBrandId/);
+  });
+
+  it('any requirements[] payload is a single violation when locked', async () => {
+    const campaign = makeCampaign();
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, { requirements: [{ minFollowers: 5 }] }),
+    ).rejects.toThrow(/Cannot change requirements/);
+    expect(prisma.campaign.update).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // LOCK bucket: present-but-unchanged is NOT a violation
+  // -----------------------------------------------------------------------
+  it('allows a locked field to be present if its value is unchanged', async () => {
+    const campaign = makeCampaign({ budget: 1000 });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, { budget: 1000, name: 'Renamed Campaign' }),
+    ).resolves.toBeDefined();
+    expect(prisma.campaign.update).toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // EXTEND-ONLY bucket
+  // -----------------------------------------------------------------------
+  it('rejects an extend-only date that is moved earlier', async () => {
+    const campaign = makeCampaign({ applyDeadline: new Date('2026-06-01') });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(call(prisma, { applyDeadline: '2026-05-01' })).rejects.toThrow(
+      /Cannot change applyDeadline/,
+    );
+    expect(prisma.campaign.update).not.toHaveBeenCalled();
+  });
+
+  it('accepts an extend-only date that is moved later', async () => {
+    const campaign = makeCampaign({ applyDeadline: new Date('2026-06-01') });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, { applyDeadline: '2026-07-01' }),
+    ).resolves.toBeDefined();
+    expect(prisma.campaign.update).toHaveBeenCalled();
+  });
+
+  it('accepts an extend-only date that is unchanged', async () => {
+    const campaign = makeCampaign({ applyDeadline: new Date('2026-06-01') });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, { applyDeadline: '2026-06-01' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('accepts setting a date where none existed (extend from nothing)', async () => {
+    const campaign = makeCampaign({ paymentDate: null });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, { paymentDate: '2026-09-01' }),
+    ).resolves.toBeDefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // Multiple simultaneous violations are all named in one error
+  // -----------------------------------------------------------------------
+  it('lists every violated field in a single error', async () => {
+    const campaign = makeCampaign({
+      budget: 1000,
+      paymentType: 'FIXED',
+      applyDeadline: new Date('2026-06-01'),
+    });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    const err = await call(prisma, {
+      budget: 2000,
+      paymentType: 'PERFORMANCE',
+      applyDeadline: '2026-05-01',
+      requirements: [{ minFollowers: 10 }],
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    const msg = (err as BadRequestException).message;
+    expect(msg).toContain('budget');
+    expect(msg).toContain('paymentType');
+    expect(msg).toContain('requirements');
+    expect(msg).toContain('applyDeadline');
+    expect(prisma.campaign.update).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Atomic reject: an always-free field is NOT applied when the same PATCH
+  // also touches a locked field.
+  // -----------------------------------------------------------------------
+  it('atomic reject: always-free field is dropped with the rest when combined with a locked field', async () => {
+    const campaign = makeCampaign({ budget: 1000 });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, { name: 'New Name', budget: 2000 }),
+    ).rejects.toThrow(/Cannot change budget/);
+    expect(prisma.campaign.update).not.toHaveBeenCalled();
+  });
+
+  it('always-free field succeeds on its own even when locked', async () => {
+    const campaign = makeCampaign({ budget: 1000 });
+    const prisma = buildUpdatePrisma(campaign, 1);
+
+    await expect(
+      call(prisma, {
+        name: 'New Name',
+        objective: 'Awareness',
+        keyMessage: 'Buy now',
+      }),
+    ).resolves.toBeDefined();
+    expect(prisma.campaign.update).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // FRONTEND TESTS NOTE
 // ---------------------------------------------------------------------------
 /*
