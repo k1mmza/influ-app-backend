@@ -221,13 +221,33 @@ export class YouTubeStrategy implements IPlatformStrategy {
    *   Map — never throws.
    * - `shares` is not exposed by this API, so only views/likes/comments are
    *   returned; a hidden like/comment count defaults to 0.
+   * - Also returns static per-content metadata from the snippet we ALREADY
+   *   request (part=snippet): a card-sized thumbnail URL and the true publish
+   *   date. Both are null when absent. No extra API cost.
    */
   async fetchVideoStats(
     videoIds: string[],
-  ): Promise<Map<string, { views: number; likes: number; comments: number }>> {
+  ): Promise<
+    Map<
+      string,
+      {
+        views: number;
+        likes: number;
+        comments: number;
+        thumbnailUrl: string | null;
+        publishedAt: string | null;
+      }
+    >
+  > {
     const out = new Map<
       string,
-      { views: number; likes: number; comments: number }
+      {
+        views: number;
+        likes: number;
+        comments: number;
+        thumbnailUrl: string | null;
+        publishedAt: string | null;
+      }
     >();
     if (!videoIds.length) return out;
 
@@ -253,10 +273,23 @@ export class YouTubeStrategy implements IPlatformStrategy {
       const json = await res.json();
       const items: any[] = json.items ?? [];
       for (const v of items) {
+        const thumbs = v.snippet?.thumbnails ?? {};
         out.set(v.id, {
           views: parseInt(v.statistics?.viewCount ?? '0', 10),
           likes: parseInt(v.statistics?.likeCount ?? '0', 10),
           comments: parseInt(v.statistics?.commentCount ?? '0', 10),
+          // Highest available still image. maxres/standard are not guaranteed on
+          // every video, so fall back down to `default` (always present). These
+          // are stable i.ytimg.com URLs — safe to persist once.
+          thumbnailUrl:
+            thumbs.maxres?.url ??
+            thumbs.standard?.url ??
+            thumbs.high?.url ??
+            thumbs.medium?.url ??
+            thumbs.default?.url ??
+            null,
+          // True on-platform publish date (ISO 8601 string).
+          publishedAt: v.snippet?.publishedAt ?? null,
         });
       }
       if (items.length < chunk.length) {

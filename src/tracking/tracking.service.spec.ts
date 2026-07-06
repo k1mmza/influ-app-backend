@@ -71,6 +71,7 @@ function makeService(
     submittedContent: {
       findUnique: jest.fn().mockResolvedValue(submittedContent),
       findMany: jest.fn().mockResolvedValue(opts.candidates ?? []),
+      update: jest.fn().mockResolvedValue({}),
     },
     platformAccount: {
       // default: no connected account (overridable per test)
@@ -388,6 +389,58 @@ describe('TrackingService', () => {
 
     expect(rec).not.toHaveBeenCalled();
     expect(res).toEqual({ written: 0, skipped: 1 });
+  });
+
+  it('TC-10b: syncYoutubeStats writes thumbnail + publishedAt once, never overwriting', async () => {
+    const candidates = [
+      // no metadata yet → both fields should be written
+      {
+        id: 'sc-new',
+        contentUrl: 'https://youtu.be/dQw4w9WgXcQ',
+        thumbnailUrl: null,
+        publishedAt: null,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+      // already populated → must NOT be overwritten
+      {
+        id: 'sc-old',
+        contentUrl: 'https://youtu.be/AAAAAAAAAAA',
+        thumbnailUrl: 'http://old.jpg',
+        publishedAt: new Date('2020-01-01'),
+        application: { campaignId: 'camp-1', influencerId: 'inf-2' },
+      },
+    ];
+    const youtube = {
+      fetchVideoStats: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            'dQw4w9WgXcQ',
+            { views: 100, likes: 5, comments: 1, thumbnailUrl: 'http://new.jpg', publishedAt: '2026-06-20T10:00:00Z' },
+          ],
+          [
+            'AAAAAAAAAAA',
+            { views: 200, likes: 9, comments: 2, thumbnailUrl: 'http://fresh.jpg', publishedAt: '2026-06-21T10:00:00Z' },
+          ],
+        ]),
+      ),
+    };
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      youtube,
+    });
+    jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    await svc.syncYoutubeStats();
+
+    const upd = svc.__prisma.submittedContent.update;
+    expect(upd).toHaveBeenCalledTimes(1); // only the metadata-less row
+    expect(upd).toHaveBeenCalledWith({
+      where: { id: 'sc-new' },
+      data: {
+        thumbnailUrl: 'http://new.jpg',
+        publishedAt: new Date('2026-06-20T10:00:00Z'),
+      },
+    });
   });
 
   it('TC-11: a TikTok content for a connected account writes a snapshot with real shares', async () => {

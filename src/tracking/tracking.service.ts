@@ -268,14 +268,19 @@ export class TrackingService {
         platform,
         contentType: c.contentType,
         contentUrl: c.contentUrl,
+        // Phase 2 real content metadata. All nullable — the UI falls back to its
+        // Phase 1 placeholders (derived name / icon thumbnail / "Approved" date)
+        // when a field is absent (non-synced content, Instagram, or TikTok
+        // thumbnails which are deliberately not captured).
+        title: c.title, // bridged from Draft.title (all approved content)
+        thumbnailUrl: c.thumbnailUrl, // YouTube only for now
+        publishedAt: c.publishedAt, // true on-platform publish date (YouTube/TikTok)
         // Raw workflow status; the UI maps it to Published/Reviewing/Draft.
         // No "Scheduled" — no such state exists in this codebase (adjustment #9:
         // derive from existing status, don't invent).
         status: c.reviewStatus,
-        // reviewedAt = when the brand APPROVED. The UI labels this "Approved",
-        // NOT "Published": no true on-platform publish date is captured today.
-        // TODO(phase2): capture real publish date from the YouTube/TikTok API
-        // responses already fetched during sync.
+        // reviewedAt = when the brand APPROVED. UI shows this ("Approved") only
+        // as a fallback when publishedAt is null.
         approvedAt: c.reviewedAt,
         submittedAt: c.submittedAt,
         synced: snap != null,
@@ -430,6 +435,10 @@ export class TrackingService {
       select: {
         id: true,
         contentUrl: true,
+        // current metadata — used to write thumbnail/publishedAt once (only when
+        // still null), never overwriting an already-captured value.
+        thumbnailUrl: true,
+        publishedAt: true,
         application: { select: { campaignId: true, influencerId: true } },
       },
     });
@@ -490,6 +499,23 @@ export class TrackingService {
         snapshotPeriod: 'DAILY',
         recordedAt,
       });
+
+      // Static per-content metadata (thumbnail + true publish date) lives on
+      // SubmittedContent, NOT on the time-series TrackingResult. Write each field
+      // only once — when still null — so a daily re-sync never overwrites a
+      // captured value or churns the row.
+      const meta: { thumbnailUrl?: string; publishedAt?: Date } = {};
+      if (content.thumbnailUrl == null && stat.thumbnailUrl)
+        meta.thumbnailUrl = stat.thumbnailUrl;
+      if (content.publishedAt == null && stat.publishedAt)
+        meta.publishedAt = new Date(stat.publishedAt);
+      if (Object.keys(meta).length > 0) {
+        await this.prisma.submittedContent.update({
+          where: { id: content.id },
+          data: meta,
+        });
+      }
+
       written++;
     }
 
@@ -535,6 +561,9 @@ export class TrackingService {
       select: {
         id: true,
         contentUrl: true,
+        // for write-once of publishedAt (TikTok thumbnails are deliberately not
+        // captured — see fetchVideoStats).
+        publishedAt: true,
         application: { select: { campaignId: true, influencerId: true } },
       },
     });
@@ -621,7 +650,13 @@ export class TrackingService {
       // other unexpected error also degrades to skip-and-flag, never throw.
       let stats: Map<
         string,
-        { views: number; likes: number; comments: number; shares: number }
+        {
+          views: number;
+          likes: number;
+          comments: number;
+          shares: number;
+          publishedAt: string | null;
+        }
       >;
       try {
         stats = await this.tiktok.fetchVideoStats(
@@ -681,6 +716,16 @@ export class TrackingService {
           snapshotPeriod: 'DAILY',
           recordedAt,
         });
+
+        // Write-once the true publish date (thumbnail intentionally skipped for
+        // TikTok — its cover URLs expire). Only when still null.
+        if (content.publishedAt == null && stat.publishedAt) {
+          await this.prisma.submittedContent.update({
+            where: { id: content.id },
+            data: { publishedAt: new Date(stat.publishedAt) },
+          });
+        }
+
         written++;
       }
     }

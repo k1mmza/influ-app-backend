@@ -260,6 +260,14 @@ model SubmittedContent {
   contentUrl      String
   thumbnailUrl    String?
   contentType     String?             // video, image, etc.
+  // Phase 2 content metadata (static per-content facts, set once):
+  //   title       — bridged from Draft.title at approval (all content, no sync)
+  //   publishedAt — true on-platform publish date, captured during platform sync
+  //                 (YouTube snippet.publishedAt / TikTok create_time). Null until
+  //                 a sync populates it; non-synced content (e.g. Instagram) stays
+  //                 null and the report falls back to the "Approved" date.
+  title           String?
+  publishedAt     DateTime?
   reviewStatus    String              @default("PENDING")
   revisionNote    String?             @db.Text
   submittedAt     DateTime            @default(now())
