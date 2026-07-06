@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { YouTubeStrategy } from '../platform-connect/strategies/youtube.strategy';
@@ -34,6 +35,38 @@ export class TrackingService {
       out.push(r);
     }
     return out;
+  }
+
+  /**
+   * Content-level platform, derived from the published contentUrl itself (never
+   * the influencer's primary account, which can differ from where a given post
+   * lives). parseVideoUrl authoritatively classifies YouTube/TikTok — including
+   * TikTok short links, which still carry platform:'tiktok' even before the id
+   * is resolved. For hosts it doesn't cover (e.g. Instagram), fall back to a
+   * minimal hostname check so real posts aren't left blank. Unknown/unparseable
+   * → null: an honest blank, never a misattributed platform.
+   */
+  private contentPlatform(contentUrl: string | null): string | null {
+    if (!contentUrl) return null;
+    // Authoritative when the URL carries a valid, sync-able video id.
+    const parsed = parseVideoUrl(contentUrl);
+    if (parsed) return parsed.platform;
+    // parseVideoUrl is strict — it validates the video id for the sync pipeline,
+    // so it rejects profile links or malformed ids even when the host makes the
+    // platform obvious. For platform LABELLING we only need the host, so fall
+    // back to a hostname check across the platforms the app uses. Unknown → null
+    // (honest blank, never a misattribution).
+    try {
+      const host = new URL(contentUrl).hostname
+        .replace(/^www\./, '')
+        .toLowerCase();
+      if (host === 'youtu.be' || host.endsWith('youtube.com')) return 'youtube';
+      if (host.endsWith('tiktok.com')) return 'tiktok';
+      if (host.endsWith('instagram.com')) return 'instagram';
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /** Top table: every campaign the user owns + rolled-up performance. */
@@ -117,6 +150,363 @@ export class TrackingService {
         recordedAt: r.recordedAt,
       };
     });
+  }
+
+  /**
+   * Client-facing campaign report (premium presentation page). Composes, in one
+   * payload, everything the report page needs — reusing latestPerContent and the
+   * same rollup math as getSummary WITHOUT forking it:
+   *  - progress:  accepted deliverable slots vs. approved (published) content
+   *  - summary:   total views + avg ER over SYNCED content (getSummary's math)
+   *  - content[]: every SubmittedContent for the campaign, LEFT-joined to its
+   *               latest TrackingResult snapshot (snap == null => not yet synced)
+   *  - lastUpdated: most recent snapshot across the campaign, or null
+   *
+   * Growth % is intentionally omitted here and everywhere on the report: no
+   * follower-history / delta tracking exists in this codebase, so any growth
+   * number would be seeded-fake or 0. Pending a Phase 2 follow-up feature.
+   */
+  async getReport(userId: string, campaignId: string) {
+    // Ownership + existence (throws NotFound if the user doesn't own it).
+    const campaign = await this.campaigns.getCampaign(userId, campaignId);
+    return this.buildReport(campaign);
+  }
+
+  /**
+   * Pure report aggregation for one campaign — performs NO authorization. Every
+   * caller MUST gate access first: getReport() does owner ownership via
+   * getCampaign(); getPublicReport() validates a share token. Kept as a single
+   * builder so the authenticated and public report paths never fork the
+   * query/rollup logic — the public path only re-shapes the OUTPUT (allowlist).
+   *
+   * Typed against the minimal structural shape it reads, so both getCampaign()'s
+   * result and the leaner public-path findUnique are assignable without coupling.
+   */
+  private async buildReport(campaign: {
+    id: string;
+    name: string;
+    status: string;
+    createdAt: Date | null;
+    submissionDate: Date | null;
+    clientBrand: { brandName: string | null; logoUrl: string | null } | null;
+    applications: { status: string }[];
+  }) {
+    const campaignId = campaign.id;
+
+    // Total Deliverables = ACCEPTED applications/invitations. An accepted invite
+    // also terminates in status 'ACCEPTED', so this counts confirmed influencer
+    // slots for either origin. This is the honest "target" (Campaign has no
+    // stored target field) — deliberately NOT getSummary's influencerCount,
+    // which counts influencers that already have tracking data. Matches the
+    // ACCEPTED-count pattern used in dashboard.service.
+    const totalDeliverables = campaign.applications.filter(
+      (a) => a.status === 'ACCEPTED',
+    ).length;
+
+    // Every submitted content for this campaign (any review status) so the
+    // report can render workflow status badges and "not yet synced" rows.
+    const contents = await this.prisma.submittedContent.findMany({
+      where: { application: { campaignId } },
+      include: {
+        application: {
+          select: {
+            influencer: {
+              select: { user: { select: { name: true } } },
+            },
+          },
+        },
+      },
+      orderBy: { reviewedAt: 'desc' },
+    });
+
+    // Latest snapshot per content. Ordered recordedAt desc so latestPerContent's
+    // first-seen-wins dedup returns the newest, and snapshots[0] is the global
+    // most-recent (drives lastUpdated).
+    const snapshots = await this.prisma.trackingResult.findMany({
+      where: { campaignId },
+      orderBy: { recordedAt: 'desc' },
+      select: {
+        submittedContentId: true,
+        views: true,
+        likes: true,
+        comments: true,
+        shares: true,
+        engagementRate: true,
+        recordedAt: true,
+      },
+    });
+    const synced = this.latestPerContent(snapshots);
+    const byContent = new Map(synced.map((s) => [s.submittedContentId, s]));
+
+    // Published = approved content. Rollup + averages over SYNCED content only,
+    // mirroring getSummary (which aggregates the latest snapshot per content).
+    const published = contents.filter(
+      (c) => c.reviewStatus === 'APPROVED',
+    ).length;
+    const totalViews = synced.reduce((s, r) => s + r.views, 0);
+    const sumEr = synced.reduce((s, r) => s + r.engagementRate, 0);
+    const avgViews = synced.length ? totalViews / synced.length : 0;
+    const avgErRaw = synced.length ? sumEr / synced.length : 0;
+    // Rounded for display; badge comparisons use the unrounded avgErRaw.
+    const avgEngagementRate = Number(avgErRaw.toFixed(1));
+
+    // Badge thresholds — a REASONABLE DEFAULT, not a precise spec: compare each
+    // synced item to the campaign's own averages. 'trending' = views above avg;
+    // 'high_engagement' = ER above avg; 'above_average' = above on BOTH (emitted
+    // alone to avoid three-badge noise).
+    //
+    // Suppressed entirely below MIN_FOR_BADGES synced items: with a single item
+    // avg === value, so `> avg` never fires and `>= avg` always fires — the
+    // badge would be meaningless either way.
+    const MIN_FOR_BADGES = 2;
+    const badgesEnabled = synced.length >= MIN_FOR_BADGES;
+
+    const lastUpdated = snapshots.length ? snapshots[0].recordedAt : null;
+
+    const content = contents.map((c) => {
+      // Platform is CONTENT-level metadata: derive it from the post URL itself,
+      // not the influencer's primary account (a creator's primary platform can
+      // differ from where THIS post lives — using the account would misattribute
+      // real content). See contentPlatform().
+      const platform = this.contentPlatform(c.contentUrl);
+      const snap = byContent.get(c.id) ?? null;
+
+      let badges: string[] = [];
+      if (badgesEnabled && snap) {
+        const trending = snap.views > avgViews;
+        const highEngagement = snap.engagementRate > avgErRaw;
+        if (trending && highEngagement) {
+          badges = ['above_average'];
+        } else if (trending) {
+          badges = ['trending'];
+        } else if (highEngagement) {
+          badges = ['high_engagement'];
+        }
+      }
+
+      return {
+        id: c.id,
+        influencerName: c.application?.influencer?.user?.name ?? 'Unknown',
+        platform,
+        contentType: c.contentType,
+        contentUrl: c.contentUrl,
+        // Phase 2 real content metadata. All nullable — the UI falls back to its
+        // Phase 1 placeholders (derived name / icon thumbnail / "Approved" date)
+        // when a field is absent (non-synced content, Instagram, or TikTok
+        // thumbnails which are deliberately not captured).
+        title: c.title, // bridged from Draft.title (all approved content)
+        thumbnailUrl: c.thumbnailUrl, // YouTube only for now
+        publishedAt: c.publishedAt, // true on-platform publish date (YouTube/TikTok)
+        // Raw workflow status; the UI maps it to Published/Reviewing/Draft.
+        // No "Scheduled" — no such state exists in this codebase (adjustment #9:
+        // derive from existing status, don't invent).
+        status: c.reviewStatus,
+        // reviewedAt = when the brand APPROVED. UI shows this ("Approved") only
+        // as a fallback when publishedAt is null.
+        approvedAt: c.reviewedAt,
+        submittedAt: c.submittedAt,
+        synced: snap != null,
+        // null (not 0) when unsynced so the UI shows "Not yet synced" rather
+        // than a fabricated zero.
+        views: snap?.views ?? null,
+        likes: snap?.likes ?? null,
+        comments: snap?.comments ?? null,
+        shares: snap?.shares ?? null,
+        engagementRate: snap?.engagementRate ?? null,
+        recordedAt: snap?.recordedAt ?? null,
+        badges,
+      };
+    });
+
+    const remaining = Math.max(0, totalDeliverables - published);
+    // Clamp to [0,100]: one accepted influencer can publish MULTIPLE approved
+    // posts, so published can exceed the accepted-slot count (deliverables) and
+    // a raw ratio would read >100%. published/totalDeliverables stay raw for
+    // transparency; only the completion percentage is capped for a sane bar.
+    const pctComplete =
+      totalDeliverables > 0
+        ? Math.min(100, Math.round((published / totalDeliverables) * 100))
+        : 0;
+
+    return {
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        status: campaign.status,
+        // Brand identity for the presentation header (real data via clientBrand).
+        // logoUrl may be null — the UI falls back to brand initials, never a
+        // broken <img>.
+        brandName: campaign.clientBrand?.brandName ?? null,
+        brandLogoUrl: campaign.clientBrand?.logoUrl ?? null,
+        // "Campaign Duration" has no dedicated start/end fields. Use createdAt as
+        // the honest start and submissionDate (planned content due date) as the
+        // end when present; both are real. UI shows a range or "ongoing".
+        startedAt: campaign.createdAt ?? null,
+        submissionDate: campaign.submissionDate ?? null,
+      },
+      progress: { totalDeliverables, published, remaining, pctComplete },
+      summary: { totalViews, avgEngagementRate, publishedPosts: published },
+      lastUpdated,
+      content,
+    };
+  }
+
+  // ── Public "Share Report" links ───────────────────────────────────────────
+  //
+  // A share link is an account-less, public URL keyed by a crypto-random token
+  // (never the campaign id). Multiple links per campaign are allowed and each is
+  // independently revocable, so a leaked link can be killed without breaking
+  // others already handed out. Links carry a finite expiry (SHARE_LINK_TTL_DAYS)
+  // — this is the app's first unauthenticated surface, and nothing else reminds
+  // anyone a link exists, so they lapse on their own; regenerate to extend.
+
+  /** Days a new share link stays valid before auto-expiring. */
+  private static readonly SHARE_LINK_TTL_DAYS = 90;
+
+  private shareLinkDto(link: {
+    id: string;
+    token: string;
+    expiresAt: Date | null;
+    lastViewedAt: Date | null;
+    createdAt: Date;
+  }) {
+    // No URL is built here — the frontend composes it from its own origin, so the
+    // backend never needs to know the public site URL.
+    return {
+      id: link.id,
+      token: link.token,
+      expiresAt: link.expiresAt,
+      lastViewedAt: link.lastViewedAt,
+      createdAt: link.createdAt,
+    };
+  }
+
+  /** Create a public share link. Owner-only — reuses getCampaign's ownership
+   *  gate (throws NotFound/Forbidden for non-owners, incl. agency-managed). */
+  async createShareLink(userId: string, campaignId: string) {
+    await this.campaigns.getCampaign(userId, campaignId);
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(
+      Date.now() + TrackingService.SHARE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const link = await this.prisma.trackingShareLink.create({
+      data: { token, campaignId, createdById: userId, expiresAt },
+    });
+    return this.shareLinkDto(link);
+  }
+
+  /** Active (non-revoked, non-expired) links for a campaign the user owns. */
+  async listShareLinks(userId: string, campaignId: string) {
+    await this.campaigns.getCampaign(userId, campaignId);
+    const now = new Date();
+    const links = await this.prisma.trackingShareLink.findMany({
+      where: {
+        campaignId,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return links.map((l) => this.shareLinkDto(l));
+  }
+
+  /** Revoke one link (kills just that URL). Ownership re-checked via the link's
+   *  own campaign, so a user can only revoke links on campaigns they own. */
+  async revokeShareLink(userId: string, linkId: string) {
+    const link = await this.prisma.trackingShareLink.findUnique({
+      where: { id: linkId },
+    });
+    if (!link) throw new NotFoundException('Share link not found');
+    await this.campaigns.getCampaign(userId, link.campaignId);
+    await this.prisma.trackingShareLink.update({
+      where: { id: linkId },
+      data: { revokedAt: new Date() },
+    });
+    return { revoked: true };
+  }
+
+  /**
+   * Public, UNAUTHENTICATED report for a share token. Validates the token is
+   * active (revoked/expired/unknown all collapse to the SAME 404 — never reveal
+   * whether a campaign exists), then reuses buildReport() and returns the
+   * explicit public allowlist DTO. A future field added to buildReport cannot
+   * leak here unless someone edits publicReportDto by hand.
+   */
+  async getPublicReport(token: string) {
+    const link = await this.prisma.trackingShareLink.findUnique({
+      where: { token },
+    });
+    const now = new Date();
+    const active =
+      link &&
+      link.revokedAt === null &&
+      (link.expiresAt === null || link.expiresAt > now);
+    if (!active) {
+      throw new NotFoundException('This report link is no longer available');
+    }
+
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: link.campaignId, deletedAt: null },
+      include: { applications: true, clientBrand: true },
+    });
+    if (!campaign) {
+      throw new NotFoundException('This report link is no longer available');
+    }
+
+    // Best-effort usage signal — must never block or fail the response.
+    void this.prisma.trackingShareLink
+      .update({ where: { id: link.id }, data: { lastViewedAt: now } })
+      .catch(() => undefined);
+
+    const report = await this.buildReport(campaign);
+    return this.publicReportDto(report);
+  }
+
+  /**
+   * Explicit public allowlist. Built by NAMING every field that ships, not by
+   * deleting keys off the internal report — so the presentation-safe surface is
+   * a deliberate whitelist. Excludes: campaign id, any budget/payment fields,
+   * influencer contact info, and internal workflow states. Per the product
+   * decision, content is PUBLISHED-ONLY and drops status/submittedAt while
+   * keeping publishedAt + approvedAt (the report's publish-date fallback logic).
+   */
+  private publicReportDto(
+    report: Awaited<ReturnType<TrackingService['buildReport']>>,
+  ) {
+    return {
+      campaign: {
+        name: report.campaign.name,
+        status: report.campaign.status,
+        brandName: report.campaign.brandName,
+        brandLogoUrl: report.campaign.brandLogoUrl,
+        startedAt: report.campaign.startedAt,
+        submissionDate: report.campaign.submissionDate,
+      },
+      progress: report.progress,
+      summary: report.summary,
+      lastUpdated: report.lastUpdated,
+      content: report.content
+        .filter((c) => c.status === 'APPROVED')
+        .map((c) => ({
+          id: c.id,
+          influencerName: c.influencerName,
+          platform: c.platform,
+          contentType: c.contentType,
+          contentUrl: c.contentUrl,
+          title: c.title,
+          thumbnailUrl: c.thumbnailUrl,
+          publishedAt: c.publishedAt,
+          approvedAt: c.approvedAt,
+          synced: c.synced,
+          views: c.views,
+          likes: c.likes,
+          comments: c.comments,
+          shares: c.shares,
+          engagementRate: c.engagementRate,
+          recordedAt: c.recordedAt,
+          badges: c.badges,
+        })),
+    };
   }
 
   /** Record a new performance snapshot for a piece of submitted content. */
@@ -225,6 +615,10 @@ export class TrackingService {
       select: {
         id: true,
         contentUrl: true,
+        // current metadata — used to write thumbnail/publishedAt once (only when
+        // still null), never overwriting an already-captured value.
+        thumbnailUrl: true,
+        publishedAt: true,
         application: { select: { campaignId: true, influencerId: true } },
       },
     });
@@ -285,6 +679,23 @@ export class TrackingService {
         snapshotPeriod: 'DAILY',
         recordedAt,
       });
+
+      // Static per-content metadata (thumbnail + true publish date) lives on
+      // SubmittedContent, NOT on the time-series TrackingResult. Write each field
+      // only once — when still null — so a daily re-sync never overwrites a
+      // captured value or churns the row.
+      const meta: { thumbnailUrl?: string; publishedAt?: Date } = {};
+      if (content.thumbnailUrl == null && stat.thumbnailUrl)
+        meta.thumbnailUrl = stat.thumbnailUrl;
+      if (content.publishedAt == null && stat.publishedAt)
+        meta.publishedAt = new Date(stat.publishedAt);
+      if (Object.keys(meta).length > 0) {
+        await this.prisma.submittedContent.update({
+          where: { id: content.id },
+          data: meta,
+        });
+      }
+
       written++;
     }
 
@@ -330,6 +741,9 @@ export class TrackingService {
       select: {
         id: true,
         contentUrl: true,
+        // for write-once of publishedAt (TikTok thumbnails are deliberately not
+        // captured — see fetchVideoStats).
+        publishedAt: true,
         application: { select: { campaignId: true, influencerId: true } },
       },
     });
@@ -416,7 +830,13 @@ export class TrackingService {
       // other unexpected error also degrades to skip-and-flag, never throw.
       let stats: Map<
         string,
-        { views: number; likes: number; comments: number; shares: number }
+        {
+          views: number;
+          likes: number;
+          comments: number;
+          shares: number;
+          publishedAt: string | null;
+        }
       >;
       try {
         stats = await this.tiktok.fetchVideoStats(
@@ -476,6 +896,16 @@ export class TrackingService {
           snapshotPeriod: 'DAILY',
           recordedAt,
         });
+
+        // Write-once the true publish date (thumbnail intentionally skipped for
+        // TikTok — its cover URLs expire). Only when still null.
+        if (content.publishedAt == null && stat.publishedAt) {
+          await this.prisma.submittedContent.update({
+            where: { id: content.id },
+            data: { publishedAt: new Date(stat.publishedAt) },
+          });
+        }
+
         written++;
       }
     }

@@ -28,6 +28,14 @@
  * TC-13: a failed token refresh skips the influencer AND sets needsReauth (skip-and-flag)
  * TC-14: a TikTokAuthError (missing video.list scope) skips AND sets needsReauth
  * TC-15: a video absent from the fetch (deleted/private/not-owned) counts as skipped
+ *
+ * Client report (getReport) — composed payload for the presentation page
+ * ----------------------------------------------------------------------
+ * TC-16: badges are suppressed when the campaign has < 2 synced items
+ * TC-17: each badge (above_average/trending/high_engagement/none) derives from the campaign average
+ * TC-18: unsynced content passes through null metrics (not fabricated zeros)
+ * TC-19: completion clamps to 100% when published exceeds accepted deliverables
+ * TC-20: platform is derived from the content URL, not the influencer's account
  */
 
 import { NotFoundException } from '@nestjs/common';
@@ -63,6 +71,7 @@ function makeService(
     submittedContent: {
       findUnique: jest.fn().mockResolvedValue(submittedContent),
       findMany: jest.fn().mockResolvedValue(opts.candidates ?? []),
+      update: jest.fn().mockResolvedValue({}),
     },
     platformAccount: {
       // default: no connected account (overridable per test)
@@ -382,6 +391,58 @@ describe('TrackingService', () => {
     expect(res).toEqual({ written: 0, skipped: 1 });
   });
 
+  it('TC-10b: syncYoutubeStats writes thumbnail + publishedAt once, never overwriting', async () => {
+    const candidates = [
+      // no metadata yet → both fields should be written
+      {
+        id: 'sc-new',
+        contentUrl: 'https://youtu.be/dQw4w9WgXcQ',
+        thumbnailUrl: null,
+        publishedAt: null,
+        application: { campaignId: 'camp-1', influencerId: 'inf-1' },
+      },
+      // already populated → must NOT be overwritten
+      {
+        id: 'sc-old',
+        contentUrl: 'https://youtu.be/AAAAAAAAAAA',
+        thumbnailUrl: 'http://old.jpg',
+        publishedAt: new Date('2020-01-01'),
+        application: { campaignId: 'camp-1', influencerId: 'inf-2' },
+      },
+    ];
+    const youtube = {
+      fetchVideoStats: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            'dQw4w9WgXcQ',
+            { views: 100, likes: 5, comments: 1, thumbnailUrl: 'http://new.jpg', publishedAt: '2026-06-20T10:00:00Z' },
+          ],
+          [
+            'AAAAAAAAAAA',
+            { views: 200, likes: 9, comments: 2, thumbnailUrl: 'http://fresh.jpg', publishedAt: '2026-06-21T10:00:00Z' },
+          ],
+        ]),
+      ),
+    };
+    const svc: any = makeService([], [{ id: 'camp-1' }], undefined, {
+      candidates,
+      youtube,
+    });
+    jest.spyOn(svc, 'recordSnapshot').mockResolvedValue({} as any);
+
+    await svc.syncYoutubeStats();
+
+    const upd = svc.__prisma.submittedContent.update;
+    expect(upd).toHaveBeenCalledTimes(1); // only the metadata-less row
+    expect(upd).toHaveBeenCalledWith({
+      where: { id: 'sc-new' },
+      data: {
+        thumbnailUrl: 'http://new.jpg',
+        publishedAt: new Date('2026-06-20T10:00:00Z'),
+      },
+    });
+  });
+
   it('TC-11: a TikTok content for a connected account writes a snapshot with real shares', async () => {
     const candidates = [
       {
@@ -562,5 +623,141 @@ describe('TrackingService', () => {
     // reached the API fine — this is per-video absence, not an auth problem
     expect(svc.__prisma.platformAccount.update).not.toHaveBeenCalled();
     expect(res).toEqual({ written: 0, skipped: 1, reauth: 0 });
+  });
+});
+
+describe('TrackingService.getReport', () => {
+  // Factories keyed to the makeService mock shape:
+  //   submittedContent.findMany -> opts.candidates ;  trackingResult.findMany -> trackingRows
+  const content = (over: any = {}) => ({
+    id: 'sc',
+    contentType: 'video',
+    contentUrl: 'https://youtu.be/dQw4w9WgXcQ',
+    reviewStatus: 'APPROVED',
+    reviewedAt: new Date('2026-06-20'),
+    submittedAt: new Date('2026-06-19'),
+    application: { influencer: { user: { name: 'Maya' } } },
+    ...over,
+  });
+  const snap = (submittedContentId: string, over: any = {}) => ({
+    submittedContentId,
+    views: 100,
+    likes: 5,
+    comments: 1,
+    shares: 0,
+    engagementRate: 5,
+    recordedAt: new Date('2026-06-20'),
+    ...over,
+  });
+  const camp = (applications: any[]) => [
+    { id: 'camp-1', name: 'Glow', status: 'ACTIVE', applications },
+  ];
+
+  it('TC-16: suppresses badges when the campaign has fewer than 2 synced items', async () => {
+    const contents = [content({ id: 'sc1' })];
+    // Extreme numbers that would "win" any average — proves suppression is about
+    // COUNT, not value: with one item, avg === value so the badge is meaningless.
+    const snaps = [snap('sc1', { views: 999, engagementRate: 99 })];
+    const svc: any = makeService(snaps, camp([{ status: 'ACCEPTED' }]), undefined, {
+      candidates: contents,
+    });
+    const report = await svc.getReport('u-1', 'camp-1');
+    expect(report.content).toHaveLength(1);
+    expect(report.content[0].synced).toBe(true);
+    expect(report.content[0].badges).toEqual([]);
+  });
+
+  it('TC-17: computes each badge from the campaign average once >= 2 synced items', async () => {
+    const contents = ['A', 'B', 'C', 'D'].map((id) => content({ id }));
+    // avgViews = 620/4 = 155 ; avgEr = 24/4 = 6
+    const snaps = [
+      snap('A', { views: 300, engagementRate: 9 }), // both above  -> above_average
+      snap('B', { views: 60, engagementRate: 3 }), //  both below  -> none
+      snap('C', { views: 200, engagementRate: 3 }), // views only  -> trending
+      snap('D', { views: 60, engagementRate: 9 }), //  ER only     -> high_engagement
+    ];
+    const svc: any = makeService(snaps, camp([{ status: 'ACCEPTED' }]), undefined, {
+      candidates: contents,
+    });
+    const report = await svc.getReport('u-1', 'camp-1');
+    const byId = Object.fromEntries(
+      report.content.map((c: any) => [c.id, c.badges]),
+    );
+    expect(byId.A).toEqual(['above_average']);
+    expect(byId.B).toEqual([]);
+    expect(byId.C).toEqual(['trending']);
+    expect(byId.D).toEqual(['high_engagement']);
+  });
+
+  it('TC-18: unsynced content passes through null metrics, not fabricated zeros', async () => {
+    const contents = [content({ id: 'synced' }), content({ id: 'unsynced' })];
+    const snaps = [
+      snap('synced', {
+        views: 500,
+        likes: 20,
+        comments: 5,
+        shares: 2,
+        engagementRate: 5.4,
+      }),
+    ];
+    const svc: any = makeService(
+      snaps,
+      camp([{ status: 'ACCEPTED' }, { status: 'ACCEPTED' }]),
+      undefined,
+      { candidates: contents },
+    );
+    const report = await svc.getReport('u-1', 'camp-1');
+    const un = report.content.find((c: any) => c.id === 'unsynced');
+    const syn = report.content.find((c: any) => c.id === 'synced');
+
+    expect(un.synced).toBe(false);
+    expect(un.views).toBeNull();
+    expect(un.likes).toBeNull();
+    expect(un.comments).toBeNull();
+    expect(un.shares).toBeNull();
+    expect(un.engagementRate).toBeNull();
+    expect(un.recordedAt).toBeNull();
+
+    expect(syn.synced).toBe(true);
+    expect(syn.views).toBe(500);
+    // Rollup + lastUpdated reflect SYNCED content only (unsynced adds nothing).
+    expect(report.summary.totalViews).toBe(500);
+    expect(report.lastUpdated).toEqual(new Date('2026-06-20'));
+  });
+
+  it('TC-19: clamps completion to 100% when published exceeds accepted deliverables', async () => {
+    // 1 ACCEPTED slot but 2 approved posts (a creator can publish many). Also
+    // confirms only ACCEPTED applications count toward deliverables.
+    const contents = [content({ id: 'p1' }), content({ id: 'p2' })];
+    const snaps = [snap('p1'), snap('p2')];
+    const svc: any = makeService(
+      snaps,
+      camp([{ status: 'ACCEPTED' }, { status: 'PENDING' }, { status: 'REJECTED' }]),
+      undefined,
+      { candidates: contents },
+    );
+    const report = await svc.getReport('u-1', 'camp-1');
+    expect(report.progress.totalDeliverables).toBe(1); // only ACCEPTED counted
+    expect(report.progress.published).toBe(2); // raw, not clamped
+    expect(report.progress.remaining).toBe(0); // max(0, 1 - 2)
+    expect(report.progress.pctComplete).toBe(100); // clamped from 200
+  });
+
+  it('TC-20: derives platform from the content URL, not the primary account', async () => {
+    const contents = [
+      content({ id: 'tt', contentUrl: 'https://tiktok.com/@x/video/mock1' }),
+      content({ id: 'ig', contentUrl: 'https://instagram.com/p/abc' }),
+      content({ id: 'nope', contentUrl: 'https://drive.google.com/file/d/xyz' }),
+    ];
+    const svc: any = makeService([], camp([{ status: 'ACCEPTED' }]), undefined, {
+      candidates: contents,
+    });
+    const report = await svc.getReport('u-1', 'camp-1');
+    const byId = Object.fromEntries(
+      report.content.map((c: any) => [c.id, c.platform]),
+    );
+    expect(byId.tt).toBe('tiktok'); // invalid id, host still classifies it
+    expect(byId.ig).toBe('instagram');
+    expect(byId.nope).toBeNull(); // unknown host -> honest blank, not a guess
   });
 });

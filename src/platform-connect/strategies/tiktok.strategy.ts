@@ -205,16 +205,37 @@ export class TikTokStrategy implements IPlatformStrategy {
   ): Promise<
     Map<
       string,
-      { views: number; likes: number; comments: number; shares: number }
+      {
+        views: number;
+        likes: number;
+        comments: number;
+        shares: number;
+        publishedAt: string | null;
+      }
     >
   > {
     const out = new Map<
       string,
-      { views: number; likes: number; comments: number; shares: number }
+      {
+        views: number;
+        likes: number;
+        comments: number;
+        shares: number;
+        publishedAt: string | null;
+      }
     >();
     if (!videoIds.length) return out;
 
-    const fields = 'id,view_count,like_count,comment_count,share_count';
+    // create_time = true publish date (Unix seconds). We deliberately do NOT
+    // request cover_image_url: TikTok cover URLs are short-lived signed URLs that
+    // 404 after a while, so persisting one statically would rot — deferred until
+    // there is a real refresh/storage plan (report keeps the icon placeholder).
+    // NOTE: unlike the YouTube path, this was NOT verified against a live
+    // response — no dev influencer has completed TikTok Connect (no OAuth token),
+    // so create_time's presence/shape here is spec-based; confirm on first real
+    // connect before trusting it.
+    const fields =
+      'id,view_count,like_count,comment_count,share_count,create_time';
 
     for (let i = 0; i < videoIds.length; i += 20) {
       const chunk = videoIds.slice(i, i + 20);
@@ -261,6 +282,11 @@ export class TikTokStrategy implements IPlatformStrategy {
           likes: v.like_count ?? 0,
           comments: v.comment_count ?? 0,
           shares: v.share_count ?? 0,
+          // Unix seconds → ISO, so the sync's write path is uniform with YouTube.
+          publishedAt:
+            typeof v.create_time === 'number'
+              ? new Date(v.create_time * 1000).toISOString()
+              : null,
         });
       }
     }

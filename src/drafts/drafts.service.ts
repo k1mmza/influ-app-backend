@@ -304,6 +304,7 @@ export class DraftsService {
     conversationId: string,
     draft: {
       id: string;
+      title: string;
       linkUrl: string | null;
       fileUrl: string | null;
       contentType: string | null;
@@ -340,12 +341,16 @@ export class DraftsService {
         applicationId: application.id,
         draftId: draft.id,
         contentUrl,
+        // title bridges straight from the Draft — no platform sync needed, so it
+        // is available for every approved piece of content immediately.
+        title: draft.title,
         contentType: draft.contentType,
         reviewStatus: 'APPROVED',
         reviewedAt: new Date(),
       },
       update: {
         contentUrl,
+        title: draft.title,
         contentType: draft.contentType,
         reviewStatus: 'APPROVED',
         reviewedAt: new Date(),
