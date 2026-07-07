@@ -125,4 +125,29 @@ export class CampaignsController {
       status,
     );
   }
+
+  // ── Public "Share Campaign" link management (owner-only; the token they mint
+  // is consumed by the UNGUARDED PublicCampaignController). Distinct path depths
+  // from the :id routes above, so no route ambiguity. ─────────────────────────
+
+  /** Mint a new public share link for this campaign. */
+  @Post(':campaignId/share')
+  createShareLink(
+    @Request() req: any,
+    @Param('campaignId') campaignId: string,
+  ) {
+    return this.campaignsService.createShareLink(req.user.userId, campaignId);
+  }
+
+  /** List the campaign's currently active (non-revoked, non-expired) links. */
+  @Get(':campaignId/share')
+  listShareLinks(@Request() req: any, @Param('campaignId') campaignId: string) {
+    return this.campaignsService.listShareLinks(req.user.userId, campaignId);
+  }
+
+  /** Revoke a single link by id (kills just that URL). */
+  @Delete('share/:linkId')
+  revokeShareLink(@Request() req: any, @Param('linkId') linkId: string) {
+    return this.campaignsService.revokeShareLink(req.user.userId, linkId);
+  }
 }

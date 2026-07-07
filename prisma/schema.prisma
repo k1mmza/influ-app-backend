@@ -53,6 +53,7 @@ model User {
   receivedReviews  Review[]       @relation("ReviewsTo")
   messages         Message[]
   trackingShareLinks TrackingShareLink[]
+  campaignShareLinks CampaignShareLink[]
 }
 
 model BrandProfile {
@@ -353,6 +354,7 @@ model Campaign {
   smartPlanBriefs    SmartPlanBrief[]
   trackingResults    TrackingResult[]
   trackingShareLinks TrackingShareLink[]
+  campaignShareLinks CampaignShareLink[]
   reviews            Review[]
   pastCollaborations PastCollaboration[]
   conversations      Conversation[]
@@ -441,6 +443,21 @@ model TrackingResult {
 // without breaking others already handed out. A link is USABLE only while
 // revokedAt == null AND (expiresAt == null || expiresAt > now).
 model TrackingShareLink {
+  id           String    @id @default(uuid())
+  token        String    @unique // crypto-random URL key (base64url)
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User      @relation(fields: [createdById], references: [id])
+  revokedAt    DateTime? // null = active
+  expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
+  lastViewedAt DateTime? // best-effort last public open; cheap usage signal
+  createdAt    DateTime  @default(now())
+
+  @@index([campaignId])
+}
+
+model CampaignShareLink {
   id           String    @id @default(uuid())
   token        String    @unique // crypto-random URL key (base64url)
   campaignId   String
