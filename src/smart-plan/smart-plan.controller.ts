@@ -2,9 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
+  Query,
   Request,
   UploadedFile,
   UseGuards,
@@ -98,5 +100,16 @@ export class SmartPlanController {
   @Roles('BRAND', 'AGENCY')
   getBriefByCampaign(@Param('campaignId') campaignId: string) {
     return this.smartPlanService.getBriefByCampaign(campaignId);
+  }
+
+  /**
+   * Delete the current brief: the user's standalone brief, or — when campaignId is
+   * given — the brief(s) attached to that campaign. Used by the brief workspace's
+   * "Delete Brief" action.
+   */
+  @Delete('brief')
+  @Roles('BRAND', 'AGENCY')
+  deleteBrief(@Request() req: any, @Query('campaignId') campaignId?: string) {
+    return this.smartPlanService.deleteBrief(req.user.userId, campaignId);
   }
 }

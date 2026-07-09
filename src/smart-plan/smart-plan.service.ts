@@ -279,6 +279,22 @@ CRITICAL RULES:
     };
   }
 
+  /**
+   * Delete the current brief. With a campaignId, removes that campaign's brief(s);
+   * otherwise removes the user's standalone brief (campaignId: null). Scoped to the
+   * owner (createdBy) so one user can't delete another's brief. Idempotent — deleting
+   * when nothing exists returns { deleted: 0 }.
+   */
+  async deleteBrief(
+    userId: string,
+    campaignId?: string,
+  ): Promise<{ deleted: number }> {
+    const res = await this.prisma.smartPlanBrief.deleteMany({
+      where: { createdBy: userId, campaignId: campaignId ?? null },
+    });
+    return { deleted: res.count };
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   /** Build provenance lists so the frontend can show "you provided" vs "AI suggested". */

@@ -24,6 +24,9 @@ import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 
 const COVER_DIR = `${process.env.UPLOAD_BASE_DIR || './uploads'}/campaign-covers`;
+// Same served location as the create-flow brief-image upload (POST /smart-plan/brief-image),
+// so all brief reference images live under one directory regardless of entry point.
+const BRIEF_IMAGE_DIR = `${process.env.UPLOAD_BASE_DIR || './uploads'}/brief-images`;
 
 @Controller('campaigns')
 @UseGuards(JwtAuthGuard)
@@ -94,6 +97,42 @@ export class CampaignsController {
   ) {
     const fileUrl = `/uploads/campaign-covers/${file.filename}`;
     return this.campaignsService.uploadCoverImage(req.user.userId, id, fileUrl);
+  }
+
+  // Upload + persist a brief reference image onto an existing campaign in one call
+  // (campaignId is known here). Mirrors the cover upload; display-only, not fed to AI.
+  @Post(':id/brief-image')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          try {
+            if (!existsSync(BRIEF_IMAGE_DIR))
+              mkdirSync(BRIEF_IMAGE_DIR, { recursive: true });
+            cb(null, BRIEF_IMAGE_DIR);
+          } catch (err) {
+            cb(err as Error, BRIEF_IMAGE_DIR);
+          }
+        },
+        filename: (req, file, cb) => {
+          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+          cb(null, `${unique}${extname(file.originalname)}`);
+        },
+      }),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        cb(null, allowed.includes(file.mimetype));
+      },
+    }),
+  )
+  uploadBriefImage(
+    @Request() req: any,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const fileUrl = `/uploads/brief-images/${file.filename}`;
+    return this.campaignsService.uploadBriefImage(req.user.userId, id, fileUrl);
   }
 
   @Delete(':id')

@@ -321,6 +321,30 @@ export class CampaignsService {
     });
   }
 
+  // Persist a brief reference image onto an EXISTING campaign (upload+replace).
+  // Mirrors uploadCoverImage: owner-checked, single field write, and — like the
+  // cover upload — intentionally bypasses the commercial-term edit-lock, since the
+  // brief image is a private creator-facing reference, not a locked term.
+  async uploadBriefImage(
+    userId: string,
+    campaignId: string,
+    briefImageUrl: string,
+  ) {
+    const user = await this.findUserWithProfiles(userId);
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId, deletedAt: null },
+      include: { clientBrand: true },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    this.assertCampaignOwnership(user, campaign);
+
+    return this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { briefImageUrl },
+      include: { requirements: true, applications: true, clientBrand: true },
+    });
+  }
+
   async deleteCampaign(userId: string, campaignId: string) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
