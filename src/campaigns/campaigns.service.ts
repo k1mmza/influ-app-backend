@@ -11,6 +11,8 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { notify } from '../notifications/notify';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
+import { AddCampaignShortlistDto } from './dto/add-campaign-shortlist.dto';
+import { UpdateCampaignShortlistDto } from './dto/update-campaign-shortlist.dto';
 
 @Injectable()
 export class CampaignsService {
@@ -604,7 +606,12 @@ export class CampaignsService {
           // status + origin let the dashboard surface pending applications
           // awaiting brand review without a per-campaign fan-out.
           applications: {
-            select: { id: true, status: true, origin: true, influencerId: true },
+            select: {
+              id: true,
+              status: true,
+              origin: true,
+              influencerId: true,
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -620,7 +627,12 @@ export class CampaignsService {
         include: {
           clientBrand: true,
           applications: {
-            select: { id: true, status: true, origin: true, influencerId: true },
+            select: {
+              id: true,
+              status: true,
+              origin: true,
+              influencerId: true,
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -791,6 +803,285 @@ export class CampaignsService {
       applyDeadline: campaign.applyDeadline ?? null,
       reviewDate: campaign.reviewDate ?? null,
       requirements: this.mapRequirements(campaign.requirements) ?? [],
+    };
+  }
+
+  // ── Campaign-scoped shortlist (client-review candidate list) ───────────────
+  //
+  // Distinct from the brand-global Shortlist and from CampaignApplication
+  // invitations. One row per (campaign, influencer) carrying an optional
+  // recommendation note + proposed price. All writes/reads are owner-gated by
+  // reusing getCampaign's ownership check (NotFound for non-owners).
+
+  /** Compact influencer shape for the shortlist preview — mirrors the columns
+   *  the internal + public influencer preview render. Picks the account with the
+   *  most followers as the "main" platform. */
+  private formatShortlistInfluencer(inf: any) {
+    const accounts = inf?.platformAccounts ?? [];
+    const main = accounts.length
+      ? accounts.reduce((prev: any, cur: any) =>
+          (prev.followers ?? 0) > (cur.followers ?? 0) ? prev : cur,
+        )
+      : null;
+    const totalFollowers = accounts.reduce(
+      (sum: number, a: any) => sum + (a.followers ?? 0),
+      0,
+    );
+    return {
+      id: inf.id,
+      name:
+        inf.user?.name ||
+        main?.displayName ||
+        inf.externalHandle ||
+        'Unnamed creator',
+      avatarUrl: main?.avatarUrl ?? null,
+      platforms: accounts.map((a: any) => a.platform),
+      mainPlatform: main?.platform ?? null,
+      mainFollowers: main?.followers ?? 0,
+      totalFollowers,
+      handle: main?.handle ?? inf.externalHandle ?? null,
+      profileUrl: main?.profileUrl ?? null,
+      category: Array.isArray(inf.categories)
+        ? inf.categories[0]
+        : inf.categories || null,
+      engagementRate: main?.engagementRate ?? 0,
+    };
+  }
+
+  private campaignShortlistDto(row: any) {
+    return {
+      id: row.id,
+      influencerId: row.influencerId,
+      recommendationNote: row.recommendationNote ?? null,
+      proposedPrice: row.proposedPrice ?? null,
+      addedAt: row.addedAt,
+      updatedAt: row.updatedAt,
+      influencer: this.formatShortlistInfluencer(row.influencer),
+    };
+  }
+
+  /** Add an influencer to this campaign's shortlist (idempotent upsert). */
+  async addToCampaignShortlist(
+    userId: string,
+    campaignId: string,
+    dto: AddCampaignShortlistDto,
+  ) {
+    await this.getCampaign(userId, campaignId);
+    const influencer = await this.prisma.influencerProfile.findUnique({
+      where: { id: dto.influencerId },
+    });
+    if (!influencer) throw new NotFoundException('Influencer not found');
+
+    const row = await this.prisma.campaignShortlist.upsert({
+      where: {
+        campaignId_influencerId: { campaignId, influencerId: dto.influencerId },
+      },
+      create: {
+        campaignId,
+        influencerId: dto.influencerId,
+        recommendationNote: dto.recommendationNote ?? null,
+        proposedPrice: dto.proposedPrice ?? null,
+        createdById: userId,
+      },
+      // Re-adding an existing entry leaves its note/price untouched.
+      update: {},
+      include: {
+        influencer: {
+          include: { user: { select: { name: true } }, platformAccounts: true },
+        },
+      },
+    });
+    return this.campaignShortlistDto(row);
+  }
+
+  /** Remove an influencer from this campaign's shortlist. */
+  async removeFromCampaignShortlist(
+    userId: string,
+    campaignId: string,
+    influencerId: string,
+  ) {
+    await this.getCampaign(userId, campaignId);
+    await this.prisma.campaignShortlist.deleteMany({
+      where: { campaignId, influencerId },
+    });
+    return { success: true };
+  }
+
+  /** Update the note and/or proposed price for one shortlisted influencer. */
+  async updateCampaignShortlistNote(
+    userId: string,
+    campaignId: string,
+    influencerId: string,
+    dto: UpdateCampaignShortlistDto,
+  ) {
+    await this.getCampaign(userId, campaignId);
+    const existing = await this.prisma.campaignShortlist.findUnique({
+      where: { campaignId_influencerId: { campaignId, influencerId } },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        'Influencer is not on this campaign shortlist',
+      );
+    }
+    // Only overwrite fields explicitly provided; null clears, undefined leaves as-is.
+    const data: Prisma.CampaignShortlistUpdateInput = {};
+    if (dto.recommendationNote !== undefined)
+      data.recommendationNote = dto.recommendationNote;
+    if (dto.proposedPrice !== undefined) data.proposedPrice = dto.proposedPrice;
+
+    const row = await this.prisma.campaignShortlist.update({
+      where: { campaignId_influencerId: { campaignId, influencerId } },
+      data,
+      include: {
+        influencer: {
+          include: { user: { select: { name: true } }, platformAccounts: true },
+        },
+      },
+    });
+    return this.campaignShortlistDto(row);
+  }
+
+  /** Owner-only: the campaign's shortlist with notes/prices, newest first. */
+  async getCampaignShortlist(userId: string, campaignId: string) {
+    await this.getCampaign(userId, campaignId);
+    const rows = await this.prisma.campaignShortlist.findMany({
+      where: { campaignId },
+      orderBy: { addedAt: 'desc' },
+      include: {
+        influencer: {
+          include: { user: { select: { name: true } }, platformAccounts: true },
+        },
+      },
+    });
+    return rows.map((r) => this.campaignShortlistDto(r));
+  }
+
+  // ── Public influencers-preview share links ─────────────────────────────────
+  //
+  // A SEPARATE link type from CampaignShareLink (the brief share) so the
+  // influencer list — which exposes proposedPrice + recommendationNote — is
+  // revocable independently. Otherwise an exact clone of the brief-share flow:
+  // crypto-random token, finite expiry, individually revocable, uniform 404 for
+  // unknown/revoked/expired tokens.
+
+  /** Mint a public influencers-preview link. Owner-only via getCampaign. */
+  async createShortlistShareLink(userId: string, campaignId: string) {
+    await this.getCampaign(userId, campaignId);
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(
+      Date.now() + CampaignsService.SHARE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const link = await this.prisma.campaignShortlistShareLink.create({
+      data: { token, campaignId, createdById: userId, expiresAt },
+    });
+    return this.shareLinkDto(link);
+  }
+
+  /** Active (non-revoked, non-expired) influencers-preview links the user owns. */
+  async listShortlistShareLinks(userId: string, campaignId: string) {
+    await this.getCampaign(userId, campaignId);
+    const now = new Date();
+    const links = await this.prisma.campaignShortlistShareLink.findMany({
+      where: {
+        campaignId,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return links.map((l) => this.shareLinkDto(l));
+  }
+
+  /** Revoke one influencers-preview link. Ownership re-checked via its campaign. */
+  async revokeShortlistShareLink(userId: string, linkId: string) {
+    const link = await this.prisma.campaignShortlistShareLink.findUnique({
+      where: { id: linkId },
+    });
+    if (!link) throw new NotFoundException('Share link not found');
+    await this.getCampaign(userId, link.campaignId);
+    await this.prisma.campaignShortlistShareLink.update({
+      where: { id: linkId },
+      data: { revokedAt: new Date() },
+    });
+    return { revoked: true };
+  }
+
+  /**
+   * Public, UNAUTHENTICATED influencers preview for a share token. Validates the
+   * token is active (unknown/revoked/expired all collapse to the SAME 404), then
+   * returns an explicit allowlist: campaign name/objective + the shortlist rows
+   * with per-influencer note/price. Campaign budget, payment, and applicant data
+   * are deliberately never included.
+   */
+  async getPublicInfluencerList(token: string) {
+    const link = await this.prisma.campaignShortlistShareLink.findUnique({
+      where: { token },
+    });
+    const now = new Date();
+    const active =
+      link &&
+      link.revokedAt === null &&
+      (link.expiresAt === null || link.expiresAt > now);
+    if (!active) {
+      throw new NotFoundException('This link is no longer available');
+    }
+
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: link.campaignId, deletedAt: null },
+      include: { clientBrand: true },
+    });
+    if (!campaign) {
+      throw new NotFoundException('This link is no longer available');
+    }
+
+    const rows = await this.prisma.campaignShortlist.findMany({
+      where: { campaignId: link.campaignId },
+      orderBy: { addedAt: 'desc' },
+      include: {
+        influencer: {
+          include: { user: { select: { name: true } }, platformAccounts: true },
+        },
+      },
+    });
+
+    // Best-effort usage signal — must never block or fail the response.
+    void this.prisma.campaignShortlistShareLink
+      .update({ where: { id: link.id }, data: { lastViewedAt: now } })
+      .catch(() => undefined);
+
+    return this.publicInfluencerListDto(campaign, rows);
+  }
+
+  /**
+   * Explicit public allowlist for the influencers preview. Built by NAMING every
+   * field that ships. proposedPrice IS shown (the point of the surface); campaign
+   * budget/payment and any influencer contact fields are intentionally excluded.
+   */
+  private publicInfluencerListDto(campaign: any, rows: any[]) {
+    return {
+      campaign: {
+        name: campaign.name,
+        objective: campaign.objective ?? null,
+        brandName: campaign.clientBrand?.brandName ?? null,
+      },
+      influencers: rows.map((row) => {
+        const inf = this.formatShortlistInfluencer(row.influencer);
+        return {
+          influencerId: row.influencerId,
+          name: inf.name,
+          avatarUrl: inf.avatarUrl,
+          platforms: inf.platforms,
+          mainPlatform: inf.mainPlatform,
+          mainFollowers: inf.mainFollowers,
+          totalFollowers: inf.totalFollowers,
+          handle: inf.handle,
+          profileUrl: inf.profileUrl,
+          category: inf.category,
+          engagementRate: inf.engagementRate,
+          recommendationNote: row.recommendationNote ?? null,
+          proposedPrice: row.proposedPrice ?? null,
+        };
+      }),
     };
   }
 }

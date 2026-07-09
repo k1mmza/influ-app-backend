@@ -23,4 +23,15 @@ export class PublicCampaignController {
   getPublicCampaign(@Param('token') token: string) {
     return this.campaigns.getPublicCampaign(token);
   }
+
+  /**
+   * Public influencers preview for a campaign shortlist share token. Distinct
+   * token namespace from the brief share above (CampaignShortlistShareLink), so a
+   * brief token won't resolve here and vice versa. Same throttle applies.
+   */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get(':token/influencers')
+  getPublicInfluencerList(@Param('token') token: string) {
+    return this.campaigns.getPublicInfluencerList(token);
+  }
 }

@@ -16,6 +16,13 @@ const svc = {
   applyToCampaign: jest.fn(),
   getApplications: jest.fn(),
   updateApplicationStatus: jest.fn(),
+  getCampaignShortlist: jest.fn(),
+  addToCampaignShortlist: jest.fn(),
+  updateCampaignShortlistNote: jest.fn(),
+  removeFromCampaignShortlist: jest.fn(),
+  createShortlistShareLink: jest.fn(),
+  listShortlistShareLinks: jest.fn(),
+  revokeShortlistShareLink: jest.fn(),
 };
 
 async function buildApp(jwtMock: object) {
@@ -232,6 +239,100 @@ describe('CampaignsController', () => {
     });
   });
 
+  describe('Campaign shortlist', () => {
+    it('200 GET /campaigns/:id/shortlist delegates with user + campaign id', async () => {
+      svc.getCampaignShortlist.mockResolvedValueOnce([{ id: 'cs1' }]);
+      const res = await request(app.getHttpServer())
+        .get('/campaigns/c1/shortlist')
+        .expect(200);
+      expect(res.body).toEqual([{ id: 'cs1' }]);
+      expect(svc.getCampaignShortlist).toHaveBeenCalledWith(TEST_USER_ID, 'c1');
+    });
+
+    it('201 POST /campaigns/:id/shortlist forwards the influencerId', async () => {
+      svc.addToCampaignShortlist.mockResolvedValueOnce({ id: 'cs1' });
+      await request(app.getHttpServer())
+        .post('/campaigns/c1/shortlist')
+        .send({ influencerId: 'inf-1' })
+        .expect(201);
+      expect(svc.addToCampaignShortlist).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'c1',
+        { influencerId: 'inf-1' },
+      );
+    });
+
+    it('400 POST /campaigns/:id/shortlist rejects a missing influencerId', async () => {
+      await request(app.getHttpServer())
+        .post('/campaigns/c1/shortlist')
+        .send({})
+        .expect(400);
+      expect(svc.addToCampaignShortlist).not.toHaveBeenCalled();
+    });
+
+    it('200 PATCH /campaigns/:id/shortlist/:influencerId forwards note + price', async () => {
+      svc.updateCampaignShortlistNote.mockResolvedValueOnce({ id: 'cs1' });
+      await request(app.getHttpServer())
+        .patch('/campaigns/c1/shortlist/inf-1')
+        .send({ recommendationNote: 'Great fit', proposedPrice: 5000 })
+        .expect(200);
+      expect(svc.updateCampaignShortlistNote).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'c1',
+        'inf-1',
+        { recommendationNote: 'Great fit', proposedPrice: 5000 },
+      );
+    });
+
+    it('200 DELETE /campaigns/:id/shortlist/:influencerId removes the entry', async () => {
+      svc.removeFromCampaignShortlist.mockResolvedValueOnce({ success: true });
+      await request(app.getHttpServer())
+        .delete('/campaigns/c1/shortlist/inf-1')
+        .expect(200);
+      expect(svc.removeFromCampaignShortlist).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'c1',
+        'inf-1',
+      );
+    });
+  });
+
+  describe('Influencers-preview share links', () => {
+    it('201 POST /campaigns/:campaignId/shortlist-share mints a link', async () => {
+      svc.createShortlistShareLink.mockResolvedValueOnce({ token: 'tok-1' });
+      const res = await request(app.getHttpServer())
+        .post('/campaigns/c1/shortlist-share')
+        .expect(201);
+      expect(res.body).toEqual({ token: 'tok-1' });
+      expect(svc.createShortlistShareLink).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'c1',
+      );
+    });
+
+    it('200 GET /campaigns/:campaignId/shortlist-share lists active links', async () => {
+      svc.listShortlistShareLinks.mockResolvedValueOnce([{ token: 'tok-1' }]);
+      await request(app.getHttpServer())
+        .get('/campaigns/c1/shortlist-share')
+        .expect(200);
+      expect(svc.listShortlistShareLinks).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'c1',
+      );
+    });
+
+    it('200 DELETE /campaigns/shortlist-share/:linkId revokes a link', async () => {
+      svc.revokeShortlistShareLink.mockResolvedValueOnce({ revoked: true });
+      await request(app.getHttpServer())
+        .delete('/campaigns/shortlist-share/link-1')
+        .expect(200);
+      expect(svc.revokeShortlistShareLink).toHaveBeenCalledWith(
+        TEST_USER_ID,
+        'link-1',
+      );
+    });
+  });
+
   describe('Auth failures', () => {
     let noAuthApp: any;
 
@@ -248,6 +349,12 @@ describe('CampaignsController', () => {
       await request(noAuthApp.getHttpServer())
         .post('/campaigns')
         .send({ name: 'X' })
+        .expect(401);
+    });
+
+    it('401 GET /campaigns/:id/shortlist without token', async () => {
+      await request(noAuthApp.getHttpServer())
+        .get('/campaigns/c1/shortlist')
         .expect(401);
     });
   });
