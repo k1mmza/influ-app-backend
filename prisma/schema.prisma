@@ -334,6 +334,7 @@ model Campaign {
   budget         Float?
   budgetSpent    Float           @default(0)
   coverImageUrl  String?         // uploaded campaign cover banner (served from /uploads/campaign-covers)
+  briefImageUrl  String?         // reference image shown to the creator in the conversation brief (served from /uploads/brief-images) — distinct from the public coverImageUrl banner, not fed to AI generation
   visibility     String?         // PUBLIC, PRIVATE
   status         String          @default("DRAFT")
   paymentType    String?

@@ -164,7 +164,11 @@ CRITICAL RULES:
     dto: CreateFromPlanDto,
   ): Promise<{ campaignId: string }> {
     const fields = dto.campaignFields ?? {};
-    const createDto = this.toCreateCampaignDto(fields, dto.clientBrandId);
+    const createDto = this.toCreateCampaignDto(
+      fields,
+      dto.clientBrandId,
+      dto.briefImageUrl,
+    );
 
     // createCampaign forces status DRAFT, resolves clientBrandId for BRAND, and for
     // AGENCY throws BadRequestException('clientBrandId is required for agency users')
@@ -347,8 +351,10 @@ CRITICAL RULES:
   private toCreateCampaignDto(
     fields: PlanCampaignFields,
     clientBrandId?: string,
+    briefImageUrl?: string,
   ): CreateCampaignDto {
     const dto = new CreateCampaignDto();
+    if (briefImageUrl) dto.briefImageUrl = briefImageUrl;
     dto.name =
       (fields.name && String(fields.name).trim()) || 'Untitled campaign';
     if (fields.objective != null) dto.objective = String(fields.objective);

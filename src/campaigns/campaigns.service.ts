@@ -126,6 +126,7 @@ export class CampaignsService {
         name: dto.name,
         objective: dto.objective,
         budget: dto.budget,
+        briefImageUrl: dto.briefImageUrl,
         visibility: dto.visibility,
         status: 'DRAFT',
         paymentType: dto.paymentType,

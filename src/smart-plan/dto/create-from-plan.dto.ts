@@ -37,6 +37,13 @@ export class CreateFromPlanDto {
   @IsOptional() @IsString() concept?: string;
   @IsOptional() @IsString() briefBody?: string;
 
+  /**
+   * Optional reference image for the creator to see in the brief. Display-only —
+   * uploaded via POST /smart-plan/brief-image before this call, never sent to the
+   * AI generate step. Persisted onto Campaign.briefImageUrl.
+   */
+  @IsOptional() @IsString() briefImageUrl?: string;
+
   /** Required for AGENCY users — which client brand the campaign belongs to. */
   @IsOptional() @IsString() clientBrandId?: string;
 }
