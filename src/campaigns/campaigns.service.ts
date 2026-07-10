@@ -763,7 +763,18 @@ export class CampaignsService {
 
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: link.campaignId, deletedAt: null },
-      include: { clientBrand: true, requirements: true },
+      include: {
+        clientBrand: true,
+        requirements: true,
+        applications: {
+          where: { status: 'ACCEPTED' },
+          include: {
+            influencer: {
+              include: { user: { select: { name: true } }, platformAccounts: true },
+            },
+          },
+        },
+      },
     });
     if (!campaign) {
       throw new NotFoundException('This campaign link is no longer available');
@@ -781,7 +792,8 @@ export class CampaignsService {
    * Explicit public allowlist. Built by NAMING every field that ships, not by
    * deleting keys off the campaign — so the presentation-safe surface is a
    * deliberate whitelist. Excludes: campaign id, budget/budgetSpent, paymentType/
-   * paymentDate, visibility, applications, and internal timestamps/FKs.
+   * paymentDate, visibility, application status/origin, and internal timestamps/FKs.
+   * `influencers` is the sub-allowlisted ACCEPTED roster (see publicCampaignInfluencerDto).
    */
   private publicCampaignDto(campaign: any) {
     return {
@@ -791,6 +803,7 @@ export class CampaignsService {
       brandName: campaign.clientBrand?.brandName ?? null,
       brandLogoUrl: campaign.clientBrand?.logoUrl ?? null,
       coverImageUrl: campaign.coverImageUrl ?? null,
+      briefImageUrl: campaign.briefImageUrl ?? null,
 
       // ── review before fully public — delete any line to pull it from the
       //    public surface ──────────────────────────────────────────────────────
@@ -803,6 +816,35 @@ export class CampaignsService {
       applyDeadline: campaign.applyDeadline ?? null,
       reviewDate: campaign.reviewDate ?? null,
       requirements: this.mapRequirements(campaign.requirements) ?? [],
+      influencers: (campaign.applications ?? []).map((app: any) =>
+        this.publicCampaignInfluencerDto(app.influencer),
+      ),
+    };
+  }
+
+  /**
+   * Explicit public allowlist for a confirmed campaign roster entry. Reuses
+   * formatShortlistInfluencer's computation (main platform account, totals, etc.)
+   * but re-lists the output fields by name rather than spreading it, so a future
+   * field added there for the shortlist feature can't silently leak into this
+   * public roster. Excludes: bio, gender, contact info, rate card/pricing,
+   * performance/quality/audience scores, application status/origin.
+   */
+  private publicCampaignInfluencerDto(inf: any) {
+    const shared = this.formatShortlistInfluencer(inf);
+    return {
+      influencerId: shared.id,
+      name: shared.name,
+      avatarUrl: shared.avatarUrl,
+      platforms: shared.platforms,
+      mainPlatform: shared.mainPlatform,
+      mainFollowers: shared.mainFollowers,
+      totalFollowers: shared.totalFollowers,
+      handle: shared.handle,
+      profileUrl: shared.profileUrl,
+      category: shared.category,
+      engagementRate: shared.engagementRate,
+      country: inf.country ?? null,
     };
   }
 
