@@ -5,14 +5,24 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { ChatGateway } from './chat.gateway';
 import { ConversationAccessService } from './conversation-access.service';
 import { v4 as uuidv4 } from 'uuid';
+
+// Maps the client-supplied attachment `type` → both the Conversation field it
+// writes and the private-bucket prefix its object lives under.
+const ATTACHMENT_KIND: Record<string, { field: string; prefix: string }> = {
+  contract: { field: 'contractUrl', prefix: 'contracts' },
+  brief: { field: 'briefFileUrl', prefix: 'briefs' },
+  payment: { field: 'paymentProofUrl', prefix: 'payment-proofs' },
+};
 
 @Injectable()
 export class ConversationsService {
   constructor(
     private prisma: PrismaService,
+    private storage: StorageService,
     private chatGateway: ChatGateway,
     private access: ConversationAccessService,
   ) {}
@@ -221,14 +231,20 @@ export class ConversationsService {
       where: { id: conversationId },
     });
     if (!conv) throw new NotFoundException('Conversation not found');
+    // Private attachments are stored as paths — sign them for the client.
+    const [contractUrl, briefFileUrl, paymentProofUrl] = await Promise.all([
+      this.storage.signPrivate(conv.contractUrl),
+      this.storage.signPrivate(conv.briefFileUrl),
+      this.storage.signPrivate(conv.paymentProofUrl),
+    ]);
     return {
       id: conv.id,
       workPhase: conv.workPhase ?? 'contact',
       brandPhaseReady: conv.brandPhaseReady,
       influencerPhaseReady: conv.influencerPhaseReady,
-      contractUrl: conv.contractUrl ?? null,
-      briefFileUrl: conv.briefFileUrl ?? null,
-      paymentProofUrl: conv.paymentProofUrl ?? null,
+      contractUrl,
+      briefFileUrl,
+      paymentProofUrl,
     };
   }
 
@@ -294,7 +310,9 @@ export class ConversationsService {
             inputMode: smartPlanBrief.inputMode,
           }
         : null,
-      briefFileUrl: conv.briefFileUrl ?? null,
+      // Private attachment path → signed URL. (campaign.briefImageUrl above is a
+      // public asset and is already an absolute URL.)
+      briefFileUrl: await this.storage.signPrivate(conv.briefFileUrl),
     };
   }
 
@@ -349,20 +367,32 @@ export class ConversationsService {
     userId: string,
     conversationId: string,
     type: string,
-    fileUrl: string,
+    file: Express.Multer.File,
   ) {
     await this.access.resolveParticipant(userId, conversationId);
-    const fieldMap: Record<string, string> = {
-      contract: 'contractUrl',
-      brief: 'briefFileUrl',
-      payment: 'paymentProofUrl',
-    };
-    const field = fieldMap[type];
-    if (!field) throw new BadRequestException('Invalid attachment type');
+    const kind = ATTACHMENT_KIND[type];
+    if (!kind) throw new BadRequestException('Invalid attachment type');
+
+    // Private file: store the storage path; sign at read time.
+    const existing = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { [kind.field]: true },
+    });
+    const objectPath = `${kind.prefix}/${this.storage.buildFilename(file.originalname)}`;
+    await this.storage.uploadPrivate(objectPath, file.buffer, file.mimetype);
+
     const updated = await this.prisma.conversation.update({
       where: { id: conversationId },
-      data: { [field]: fileUrl, updatedAt: new Date() },
+      data: { [kind.field]: objectPath, updatedAt: new Date() },
     });
-    return { url: fileUrl, type, conversationId: updated.id };
+    await this.storage.deletePrivate(
+      (existing as Record<string, string | null> | null)?.[kind.field],
+    );
+    // Return the signed URL (read shape) so the client can render immediately.
+    return {
+      url: await this.storage.signPrivate(objectPath),
+      type,
+      conversationId: updated.id,
+    };
   }
 }

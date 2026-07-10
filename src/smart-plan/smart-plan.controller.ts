@@ -13,9 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -23,11 +21,6 @@ import { GenerateBriefDto } from './dto/generate-brief.dto';
 import { SaveBriefDto } from './dto/save-brief.dto';
 import { CreateFromPlanDto } from './dto/create-from-plan.dto';
 import { SmartPlanService } from './smart-plan.service';
-
-// Same upload pipeline as campaign covers — local disk served via /uploads. The
-// brief reference image is uploaded here (before a campaign exists) so its URL can
-// be passed to POST /smart-plan/create-campaign. Display-only; never fed to the AI.
-const BRIEF_IMAGE_DIR = `${process.env.UPLOAD_BASE_DIR || './uploads'}/brief-images`;
 
 @Controller('smart-plan')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -39,21 +32,7 @@ export class SmartPlanController {
   @Roles('BRAND', 'AGENCY')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, file, cb) => {
-          try {
-            if (!existsSync(BRIEF_IMAGE_DIR))
-              mkdirSync(BRIEF_IMAGE_DIR, { recursive: true });
-            cb(null, BRIEF_IMAGE_DIR);
-          } catch (err) {
-            cb(err as Error, BRIEF_IMAGE_DIR);
-          }
-        },
-        filename: (req, file, cb) => {
-          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-          cb(null, `${unique}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -63,7 +42,7 @@ export class SmartPlanController {
   )
   uploadBriefImage(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Image file is required');
-    return { url: `/uploads/brief-images/${file.filename}` };
+    return this.smartPlanService.uploadBriefImage(file);
   }
 
   /** Generate a campaign brief + inferred campaign fields + provenance. No DB writes. */

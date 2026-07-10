@@ -159,7 +159,7 @@ describe('ProfileController', () => {
         .expect(201);
       expect(profileSvc.uploadAvatarFile).toHaveBeenCalledWith(
         TEST_USER_ID,
-        expect.stringContaining('/uploads/avatars/'),
+        expect.objectContaining({ originalname: 'avatar.jpg' }),
       );
     });
   });
@@ -178,7 +178,7 @@ describe('ProfileController', () => {
         .expect(201);
       expect(profileSvc.uploadRateCardFile).toHaveBeenCalledWith(
         TEST_USER_ID,
-        expect.stringContaining('/uploads/rate-cards/'),
+        expect.objectContaining({ originalname: 'rate-card.pdf' }),
       );
     });
   });

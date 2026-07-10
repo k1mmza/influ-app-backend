@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { notify } from '../notifications/notify';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
@@ -18,6 +19,7 @@ import { UpdateCampaignShortlistDto } from './dto/update-campaign-shortlist.dto'
 export class CampaignsService {
   constructor(
     private prisma: PrismaService,
+    private storage: StorageService,
     private conversations: ConversationsService,
   ) {}
 
@@ -306,7 +308,7 @@ export class CampaignsService {
   async uploadCoverImage(
     userId: string,
     campaignId: string,
-    coverImageUrl: string,
+    file: Express.Multer.File,
   ) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
@@ -316,11 +318,20 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaign not found');
     this.assertCampaignOwnership(user, campaign);
 
-    return this.prisma.campaign.update({
+    // Public asset: store absolute URL, then delete the replaced object.
+    const objectPath = `campaign-covers/${this.storage.buildFilename(file.originalname)}`;
+    const coverImageUrl = await this.storage.uploadPublic(
+      objectPath,
+      file.buffer,
+      file.mimetype,
+    );
+    const updated = await this.prisma.campaign.update({
       where: { id: campaignId },
       data: { coverImageUrl },
       include: { requirements: true, applications: true, clientBrand: true },
     });
+    await this.storage.deletePublicByUrl(campaign.coverImageUrl);
+    return updated;
   }
 
   // Persist a brief reference image onto an EXISTING campaign (upload+replace).
@@ -330,7 +341,7 @@ export class CampaignsService {
   async uploadBriefImage(
     userId: string,
     campaignId: string,
-    briefImageUrl: string,
+    file: Express.Multer.File,
   ) {
     const user = await this.findUserWithProfiles(userId);
     const campaign = await this.prisma.campaign.findUnique({
@@ -340,11 +351,20 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaign not found');
     this.assertCampaignOwnership(user, campaign);
 
-    return this.prisma.campaign.update({
+    // Public asset (shares the brief-images/ prefix with POST /smart-plan/brief-image).
+    const objectPath = `brief-images/${this.storage.buildFilename(file.originalname)}`;
+    const briefImageUrl = await this.storage.uploadPublic(
+      objectPath,
+      file.buffer,
+      file.mimetype,
+    );
+    const updated = await this.prisma.campaign.update({
       where: { id: campaignId },
       data: { briefImageUrl },
       include: { requirements: true, applications: true, clientBrand: true },
     });
+    await this.storage.deletePublicByUrl(campaign.briefImageUrl);
+    return updated;
   }
 
   async deleteCampaign(userId: string, campaignId: string) {
@@ -362,6 +382,8 @@ export class CampaignsService {
       );
     }
 
+    // Soft delete (deletedAt) — a cancelled/draft campaign may be restored, so the
+    // cover/brief storage objects are intentionally left in place, not deleted.
     await this.prisma.campaign.update({
       where: { id: campaignId },
       data: { deletedAt: new Date() },

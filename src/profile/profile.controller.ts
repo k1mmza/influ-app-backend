@@ -13,19 +13,13 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage, memoryStorage } from 'multer';
-import { extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { memoryStorage } from 'multer';
 import { ProfileService } from './profile.service';
 import { MediaKitImportService } from './media-kit-import.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-
-const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
-const UPLOAD_DIR = `${BASE}/rate-cards`;
-const AVATAR_DIR = `${BASE}/avatars`;
 
 @UseGuards(JwtAuthGuard)
 @Controller('profile')
@@ -83,21 +77,7 @@ export class ProfileController {
   @Post('avatar')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, file, cb) => {
-          try {
-            if (!existsSync(AVATAR_DIR))
-              mkdirSync(AVATAR_DIR, { recursive: true });
-            cb(null, AVATAR_DIR);
-          } catch (err) {
-            cb(err as Error, AVATAR_DIR);
-          }
-        },
-        filename: (req, file, cb) => {
-          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-          cb(null, `${unique}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -106,28 +86,13 @@ export class ProfileController {
     }),
   )
   uploadAvatar(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
-    const fileUrl = `/uploads/avatars/${file.filename}`;
-    return this.profileService.uploadAvatarFile(req.user.userId, fileUrl);
+    return this.profileService.uploadAvatarFile(req.user.userId, file);
   }
 
   @Post('rate-card')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, file, cb) => {
-          try {
-            if (!existsSync(UPLOAD_DIR))
-              mkdirSync(UPLOAD_DIR, { recursive: true });
-            cb(null, UPLOAD_DIR);
-          } catch (err) {
-            cb(err as Error, UPLOAD_DIR);
-          }
-        },
-        filename: (req, file, cb) => {
-          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-          cb(null, `${unique}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowed = [
@@ -144,8 +109,7 @@ export class ProfileController {
     @Request() req: any,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    const fileUrl = `/uploads/rate-cards/${file.filename}`;
-    return this.profileService.uploadRateCardFile(req.user.userId, fileUrl);
+    return this.profileService.uploadRateCardFile(req.user.userId, file);
   }
 
   @Delete('rate-card')

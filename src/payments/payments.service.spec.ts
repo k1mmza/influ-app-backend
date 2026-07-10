@@ -78,10 +78,24 @@ function build(user: any, existingPayment: any = payment()) {
       .fn()
       .mockImplementation(async (arr: any[]) => Promise.all(arr)),
   };
+  const storage: any = {
+    uploadPrivate: jest.fn().mockResolvedValue(undefined),
+    signPrivate: jest
+      .fn()
+      .mockImplementation((p: string | null) => (p ? `signed:${p}` : null)),
+    deletePrivate: jest.fn().mockResolvedValue(undefined),
+    buildFilename: jest.fn().mockReturnValue('file.png'),
+  };
   const gateway: any = { emitPaymentsUpdate: jest.fn() };
-  const service = new PaymentsService(prisma, gateway);
-  return { service, prisma, gateway };
+  const service = new PaymentsService(prisma, storage, gateway);
+  return { service, prisma, storage, gateway };
 }
+
+const FILE: any = {
+  originalname: 'x.png',
+  buffer: Buffer.from('x'),
+  mimetype: 'image/png',
+};
 
 describe('PaymentsService status transitions', () => {
   it('TC-01: brand creates a payment in PENDING', async () => {
@@ -99,21 +113,22 @@ describe('PaymentsService status transitions', () => {
   });
 
   it('TC-03: brand uploads proof → AWAITING_CONFIRMATION', async () => {
-    const { service } = build(BRAND_USER, payment({ status: 'PENDING' }));
-    const res = await service.uploadProof(
-      'u-brand',
-      'conv-1',
-      'pay-1',
-      '/uploads/conversations/x.png',
-    );
+    const { service, storage } = build(BRAND_USER, payment({ status: 'PENDING' }));
+    const res = await service.uploadProof('u-brand', 'conv-1', 'pay-1', FILE);
     expect(res.status).toBe('AWAITING_CONFIRMATION');
-    expect(res.proofUrl).toBe('/uploads/conversations/x.png');
+    // Stored as a private path under payment-proofs/; the response is signed.
+    expect(storage.uploadPrivate).toHaveBeenCalledWith(
+      expect.stringContaining('payment-proofs/'),
+      FILE.buffer,
+      FILE.mimetype,
+    );
+    expect(res.proofUrl).toContain('payment-proofs/');
   });
 
   it('TC-04: influencer cannot upload proof', async () => {
     const { service } = build(INF_USER, payment({ status: 'PENDING' }));
     await expect(
-      service.uploadProof('u-inf', 'conv-1', 'pay-1', '/uploads/x.png'),
+      service.uploadProof('u-inf', 'conv-1', 'pay-1', FILE),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 

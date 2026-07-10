@@ -31,7 +31,20 @@ import { ConversationsService } from '../conversations/conversations.service';
 // (with a stub gateway) that operates on the test's tx proxy therefore preserves every existing
 // assertion (e.g. prisma.__lastTx.conversation.create) with no behavioural change.
 function makeConvService(prisma: any): ConversationsService {
-  return new ConversationsService(prisma, {} as any);
+  return new ConversationsService(prisma, {} as any, {} as any, {} as any);
+}
+
+// StorageService stub — these tests don't exercise the upload paths, so the
+// methods are never called; it only satisfies the constructor dependency.
+function makeStorage(): any {
+  return {
+    uploadPublic: jest.fn(),
+    uploadPrivate: jest.fn(),
+    signPrivate: jest.fn().mockImplementation((p: string | null) => p ?? null),
+    deletePublicByUrl: jest.fn(),
+    deletePrivate: jest.fn(),
+    buildFilename: jest.fn().mockReturnValue('file.jpg'),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +151,14 @@ function buildPrisma(overrides: Record<string, any> = {}): any {
       findMany: jest.fn(),
       create: jest.fn(),
     },
+    // Post-commit best-effort notify on ACCEPTED reads influencerProfile then
+    // writes a notification; both must exist on the mock.
+    influencerProfile: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    notification: {
+      create: jest.fn(),
+    },
     // $transaction will be overridden per test where needed
     $transaction: jest.fn(),
   };
@@ -188,7 +209,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
       return result;
     });
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
     const result = await service.updateApplicationStatus(
       'user-brand-1',
       'campaign-1',
@@ -240,7 +261,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
       return result;
     });
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
     const result = await service.updateApplicationStatus(
       'user-brand-1',
       'campaign-1',
@@ -269,7 +290,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
       status: 'REJECTED',
     });
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
     const result = await service.updateApplicationStatus(
       'user-brand-1',
       'campaign-1',
@@ -301,7 +322,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
       status: 'PENDING',
     });
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
     const result = await service.updateApplicationStatus(
       'user-brand-1',
       'campaign-1',
@@ -331,7 +352,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
     prisma.user.findUnique.mockResolvedValue(user);
     prisma.campaign.findUnique.mockResolvedValue(campaign);
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     await expect(
       service.updateApplicationStatus(
@@ -363,6 +384,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
 
     const serviceRej = new CampaignsService(
       prismaRej,
+      makeStorage(),
       makeConvService(prismaRej),
     );
     const rejResult = await serviceRej.updateApplicationStatus(
@@ -398,6 +420,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
 
     const serviceAcc = new CampaignsService(
       prismaAcc,
+      makeStorage(),
       makeConvService(prismaAcc),
     );
     const accResult = await serviceAcc.updateApplicationStatus(
@@ -421,7 +444,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
     prisma.user.findUnique.mockResolvedValue(user);
     prisma.campaign.findUnique.mockResolvedValue(null);
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     await expect(
       service.updateApplicationStatus(
@@ -444,7 +467,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
     prisma.user.findUnique.mockResolvedValue(user);
     prisma.campaign.findUnique.mockResolvedValue(campaign);
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     await expect(
       service.updateApplicationStatus(
@@ -470,7 +493,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
     prisma.campaign.findUnique.mockResolvedValue(campaign);
     prisma.campaignApplication.findUnique.mockResolvedValue(application);
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     await expect(
       service.updateApplicationStatus(
@@ -505,7 +528,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
     prisma.campaign.findUnique.mockResolvedValue(campaign);
     prisma.campaignApplication.findUnique.mockResolvedValue(application);
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     // assertCampaignOwnership fires first → NotFoundException (not BadRequestException)
     await expect(
@@ -541,7 +564,7 @@ describe('CampaignsService.updateApplicationStatus', () => {
     prisma.campaign.findUnique.mockResolvedValue(campaign);
     prisma.campaignApplication.findUnique.mockResolvedValue(application);
 
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     // The code checks `if (!clientBrandId)` — empty string is falsy
     await expect(
@@ -623,7 +646,7 @@ describe('CampaignsService.getApplications', () => {
   // -----------------------------------------------------------------------
   it('TC-07: prisma.conversation.findMany is called exactly once regardless of application count', async () => {
     const prisma = buildGetApplicationsPrisma();
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     await service.getApplications('user-brand-1', 'campaign-1');
 
@@ -637,7 +660,7 @@ describe('CampaignsService.getApplications', () => {
   // -----------------------------------------------------------------------
   it('TC-08: application whose influencerId matches a conversation gets conversationId attached', async () => {
     const prisma = buildGetApplicationsPrisma();
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     const results = await service.getApplications('user-brand-1', 'campaign-1');
 
@@ -651,7 +674,7 @@ describe('CampaignsService.getApplications', () => {
   // -----------------------------------------------------------------------
   it('TC-09: applications with no matching conversation get conversationId: null', async () => {
     const prisma = buildGetApplicationsPrisma();
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     const results = await service.getApplications('user-brand-1', 'campaign-1');
 
@@ -668,7 +691,7 @@ describe('CampaignsService.getApplications', () => {
   // -----------------------------------------------------------------------
   it('TC-10: conversation.findMany is scoped to the correct campaignId', async () => {
     const prisma = buildGetApplicationsPrisma();
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
 
     await service.getApplications('user-brand-1', 'campaign-1');
 
@@ -702,7 +725,7 @@ describe('CampaignsService.updateCampaign — commercial-term lock', () => {
   }
 
   const call = (prisma: any, dto: any) => {
-    const service = new CampaignsService(prisma, makeConvService(prisma));
+    const service = new CampaignsService(prisma, makeStorage(), makeConvService(prisma));
     return service.updateCampaign('user-brand-1', 'campaign-1', dto);
   };
 

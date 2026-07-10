@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { ChatGateway } from '../conversations/chat.gateway';
 import { CreateDraftDto } from './dto/create-draft.dto';
 import { UpdateDraftDto } from './dto/update-draft.dto';
@@ -28,6 +29,7 @@ export class DraftsService {
 
   constructor(
     private prisma: PrismaService,
+    private storage: StorageService,
     private chatGateway: ChatGateway,
   ) {}
 
@@ -78,10 +80,17 @@ export class DraftsService {
 
   async list(userId: string, conversationId: string) {
     await this.resolveParticipant(userId, conversationId);
-    return this.prisma.draft.findMany({
+    const drafts = await this.prisma.draft.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
     });
+    // fileUrl is a private storage path — sign it. linkUrl (external) is untouched.
+    return Promise.all(
+      drafts.map(async (d) => ({
+        ...d,
+        fileUrl: await this.storage.signPrivate(d.fileUrl),
+      })),
+    );
   }
 
   async create(userId: string, conversationId: string, dto: CreateDraftDto) {
@@ -176,8 +185,10 @@ export class DraftsService {
       throw new ForbiddenException(
         'Only the influencer can delete drafts in this conversation',
       );
-    await this.getOwnedDraft(conversationId, draftId);
+    const draft = await this.getOwnedDraft(conversationId, draftId);
     await this.prisma.draft.delete({ where: { id: draftId } });
+    // Hard delete — remove the attached file object too (best-effort).
+    await this.storage.deletePrivate(draft.fileUrl);
     this.chatGateway.emitDraftsUpdate(conversationId);
     return { id: draftId, deleted: true };
   }
@@ -362,7 +373,7 @@ export class DraftsService {
     userId: string,
     conversationId: string,
     draftId: string,
-    fileUrl: string,
+    file: Express.Multer.File,
     contentType: string,
   ) {
     const { isInfluencerOwner } = await this.resolveParticipant(
@@ -373,13 +384,19 @@ export class DraftsService {
       throw new ForbiddenException(
         'Only the influencer can upload draft files',
       );
-    await this.getOwnedDraft(conversationId, draftId);
+    const existing = await this.getOwnedDraft(conversationId, draftId);
+
+    // Private file: store the storage path, replace-delete the old one.
+    const objectPath = `drafts/${this.storage.buildFilename(file.originalname)}`;
+    await this.storage.uploadPrivate(objectPath, file.buffer, file.mimetype);
 
     const draft = await this.prisma.draft.update({
       where: { id: draftId },
-      data: { fileUrl, contentType },
+      data: { fileUrl: objectPath, contentType },
     });
+    await this.storage.deletePrivate(existing.fileUrl);
     this.chatGateway.emitDraftsUpdate(conversationId);
-    return draft;
+    // Return the signed URL (read shape) so the client can render immediately.
+    return { ...draft, fileUrl: await this.storage.signPrivate(objectPath) };
   }
 }

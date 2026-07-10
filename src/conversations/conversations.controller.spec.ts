@@ -158,7 +158,7 @@ describe('ConversationsController', () => {
         TEST_USER_ID,
         'conv-1',
         'image',
-        expect.stringContaining('/uploads/conversations/'),
+        expect.objectContaining({ originalname: 'test.jpg' }),
       );
     });
   });

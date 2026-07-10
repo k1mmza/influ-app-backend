@@ -76,7 +76,19 @@ services:
           name: influ-app-redis      #          (To use external Redis e.g. Upstash instead: delete this
           property: connectionString #           fromService block + the keyvalue service, and set sync:false.)
 
-      # --- Uploads ----------------------------------------------------------
+      # --- Uploads (Supabase Storage) --------------------------------------
+      # Uploads now go to Supabase Storage buckets (public-assets / private-files).
+      - key: SUPABASE_URL            # SECRET — your Supabase project URL (https://<ref>.supabase.co)
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY  # SECRET — service-role key; bypasses RLS, backend-only.
+        sync: false                     #          NEVER expose to the frontend.
+
+      # --- Legacy local-disk uploads (REMOVE after backfill) ----------------
+      # UPLOAD_BASE_DIR + the `disk:` block above are now only needed so the
+      # one-time backfill (prisma/backfill-storage.ts) can read the old files.
+      # Once the backfill has run and been verified in prod, DELETE both the
+      # UPLOAD_BASE_DIR var and the disk block, and drop the numInstances: 1
+      # constraint. Do NOT remove them before the backfill.
       - key: UPLOAD_BASE_DIR         # points at the persistent disk mount above
         value: /data/uploads
 

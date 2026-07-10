@@ -20,6 +20,14 @@ const INFLUENCER_OWNER = {
   agencyProfile: null,
 };
 
+// signPrivate is identity here so the join-logic assertions read the raw path.
+const storageMock = (): any => ({
+  uploadPrivate: jest.fn().mockResolvedValue(undefined),
+  signPrivate: jest.fn().mockImplementation((p: string | null) => p ?? null),
+  deletePrivate: jest.fn().mockResolvedValue(undefined),
+  buildFilename: jest.fn().mockReturnValue('file.pdf'),
+});
+
 function build(conv: any, user: any = INFLUENCER_OWNER) {
   const prisma: any = {
     user: { findUnique: jest.fn().mockResolvedValue(user) },
@@ -27,7 +35,7 @@ function build(conv: any, user: any = INFLUENCER_OWNER) {
   };
   const gateway: any = {};
   const access = new ConversationAccessService(prisma);
-  const service = new ConversationsService(prisma, gateway, access);
+  const service = new ConversationsService(prisma, storageMock(), gateway, access);
   return { service, prisma };
 }
 
@@ -44,7 +52,7 @@ function buildPhaseReady(user: any, conv: any) {
   };
   const gateway: any = { emitPhaseUpdate: jest.fn() };
   const access = new ConversationAccessService(prisma);
-  const service = new ConversationsService(prisma, gateway, access);
+  const service = new ConversationsService(prisma, storageMock(), gateway, access);
   return { service, prisma, gateway };
 }
 
