@@ -53,6 +53,9 @@ model User {
   receivedReviews  Review[]       @relation("ReviewsTo")
   messages         Message[]
   trackingShareLinks TrackingShareLink[]
+  campaignShareLinks CampaignShareLink[]
+  campaignShortlists CampaignShortlist[]
+  campaignShortlistShareLinks CampaignShortlistShareLink[]
 }
 
 model BrandProfile {
@@ -131,6 +134,7 @@ model InfluencerProfile {
   applications       CampaignApplication[]
   trackingResults    TrackingResult[]
   shortlists         Shortlist[]
+  campaignShortlists CampaignShortlist[]
   conversations      Conversation[]
   payments           Payment[]
   profileEvents      ProfileEvent[]
@@ -333,6 +337,7 @@ model Campaign {
   budget         Float?
   budgetSpent    Float           @default(0)
   coverImageUrl  String?         // uploaded campaign cover banner (served from /uploads/campaign-covers)
+  briefImageUrl  String?         // reference image shown to the creator in the conversation brief (served from /uploads/brief-images) — distinct from the public coverImageUrl banner, not fed to AI generation
   visibility     String?         // PUBLIC, PRIVATE
   status         String          @default("DRAFT")
   paymentType    String?
@@ -353,6 +358,9 @@ model Campaign {
   smartPlanBriefs    SmartPlanBrief[]
   trackingResults    TrackingResult[]
   trackingShareLinks TrackingShareLink[]
+  campaignShareLinks CampaignShareLink[]
+  campaignShortlists          CampaignShortlist[]
+  campaignShortlistShareLinks CampaignShortlistShareLink[]
   reviews            Review[]
   pastCollaborations PastCollaboration[]
   conversations      Conversation[]
@@ -455,6 +463,21 @@ model TrackingShareLink {
   @@index([campaignId])
 }
 
+model CampaignShareLink {
+  id           String    @id @default(uuid())
+  token        String    @unique // crypto-random URL key (base64url)
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User      @relation(fields: [createdById], references: [id])
+  revokedAt    DateTime? // null = active
+  expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
+  lastViewedAt DateTime? // best-effort last public open; cheap usage signal
+  createdAt    DateTime  @default(now())
+
+  @@index([campaignId])
+}
+
 model Shortlist {
   id            String            @id @default(uuid())
   clientBrandId String
@@ -464,6 +487,46 @@ model Shortlist {
   addedAt       DateTime          @default(now())
 
   @@unique([clientBrandId, influencerId])
+}
+
+// Campaign-scoped shortlist: the client-review candidate list for ONE campaign,
+// distinct from the brand-global Shortlist above and from CampaignApplication
+// invitations. One row per (campaign, influencer), carrying the per-influencer
+// recommendation note + proposed price shown in the influencers preview.
+model CampaignShortlist {
+  id                 String            @id @default(uuid())
+  campaignId         String
+  campaign           Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  influencerId       String
+  influencer         InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  recommendationNote String?           @db.Text // "why we recommend them"
+  proposedPrice      Int? // proposed price in THB (integer, mirrors budget/ratePerPost convention)
+  createdById        String
+  createdBy          User              @relation(fields: [createdById], references: [id])
+  addedAt            DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@unique([campaignId, influencerId])
+  @@index([campaignId])
+}
+
+// Public, account-less share link for a campaign's influencers preview. An exact
+// clone of CampaignShareLink but a SEPARATE model so the influencer list (which
+// exposes proposedPrice + recommendationNote) is revocable independently of the
+// campaign brief share link.
+model CampaignShortlistShareLink {
+  id           String    @id @default(uuid())
+  token        String    @unique // crypto-random URL key (base64url)
+  campaignId   String
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User      @relation(fields: [createdById], references: [id])
+  revokedAt    DateTime? // null = active
+  expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
+  lastViewedAt DateTime? // best-effort last public open; cheap usage signal
+  createdAt    DateTime  @default(now())
+
+  @@index([campaignId])
 }
 
 // COMMUNICATION

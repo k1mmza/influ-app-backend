@@ -267,6 +267,7 @@ export class ConversationsService {
             keyMessage: campaign.keyMessage,
             deliverables: campaign.deliverables,
             doAndDont: campaign.doAndDont,
+            briefImageUrl: campaign.briefImageUrl,
             applyDeadline: campaign.applyDeadline,
             submissionDate: campaign.submissionDate,
           }

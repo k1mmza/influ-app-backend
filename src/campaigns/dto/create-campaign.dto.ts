@@ -61,6 +61,10 @@ export class CreateCampaignDto {
 
   @IsOptional()
   @IsString()
+  briefImageUrl?: string;
+
+  @IsOptional()
+  @IsString()
   clientBrandId?: string;
 
   @IsOptional()
