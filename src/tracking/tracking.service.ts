@@ -107,6 +107,21 @@ export class TrackingService {
     });
   }
 
+  /**
+   * Resolve a display name for an influencer, mirroring the app-wide order
+   * (see formatShortlistInfluencer / getInfluencerName): external/unclaimed
+   * profiles have no linked User, so fall back to a platform account's
+   * displayName, then the externalHandle, before 'Unknown'.
+   */
+  private resolveInfluencerName(inf: any): string {
+    return (
+      inf?.user?.name ||
+      inf?.platformAccounts?.find((a: any) => a?.displayName)?.displayName ||
+      inf?.externalHandle ||
+      'Unknown'
+    );
+  }
+
   /** Detail table: per-influencer latest snapshot for one campaign. */
   async getDetail(userId: string, campaignId: string) {
     // ownership + existence — throws NotFound if the user doesn't own it
@@ -119,9 +134,10 @@ export class TrackingService {
         influencer: {
           select: {
             growthRate: true,
+            externalHandle: true,
             user: { select: { name: true } },
             platformAccounts: {
-              select: { platform: true, isPrimary: true },
+              select: { platform: true, isPrimary: true, displayName: true },
             },
           },
         },
@@ -137,7 +153,7 @@ export class TrackingService {
         null;
       return {
         id: r.id,
-        influencerName: r.influencer?.user?.name ?? 'Unknown',
+        influencerName: this.resolveInfluencerName(r.influencer),
         platform,
         contentType: r.submittedContent?.contentType ?? null,
         contentUrl: r.submittedContent?.contentUrl ?? null,
@@ -211,7 +227,11 @@ export class TrackingService {
         application: {
           select: {
             influencer: {
-              select: { user: { select: { name: true } } },
+              select: {
+                externalHandle: true,
+                user: { select: { name: true } },
+                platformAccounts: { select: { displayName: true } },
+              },
             },
           },
         },
@@ -286,7 +306,7 @@ export class TrackingService {
 
       return {
         id: c.id,
-        influencerName: c.application?.influencer?.user?.name ?? 'Unknown',
+        influencerName: this.resolveInfluencerName(c.application?.influencer),
         platform,
         contentType: c.contentType,
         contentUrl: c.contentUrl,

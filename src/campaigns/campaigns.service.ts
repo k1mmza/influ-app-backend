@@ -859,6 +859,7 @@ export class CampaignsService {
       name: shared.name,
       avatarUrl: shared.avatarUrl,
       platforms: shared.platforms,
+      platformLinks: shared.platformLinks,
       mainPlatform: shared.mainPlatform,
       mainFollowers: shared.mainFollowers,
       totalFollowers: shared.totalFollowers,
@@ -905,6 +906,14 @@ export class CampaignsService {
       totalFollowers,
       handle: main?.handle ?? inf.externalHandle ?? null,
       profileUrl: main?.profileUrl ?? null,
+      // One entry per connected account so each platform pill can link to its OWN
+      // profile URL (not the single main-platform profileUrl above).
+      platformLinks: accounts.map((a: any) => ({
+        platform: a.platform,
+        profileUrl: a.profileUrl ?? null,
+        handle: a.handle ?? null,
+        followers: a.followers ?? 0,
+      })),
       category: Array.isArray(inf.categories)
         ? inf.categories[0]
         : inf.categories || null,
