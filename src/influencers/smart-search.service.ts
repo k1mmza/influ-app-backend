@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { CATEGORY_TAGS, STYLE_TAGS } from './ai-analysis.service';
 
 export interface ParsedFilters {
   platforms?: string[];
@@ -15,9 +16,7 @@ export interface ParsedFilters {
   audienceGender?: string;
   audienceAgeGroup?: string;
   country?: string;
-  city?: string;
   stylePresent?: string;
-  campaignIntents?: string[];
   keyword?: string;
 }
 
@@ -38,51 +37,83 @@ export class SmartSearchService {
         body: JSON.stringify({
           model: 'claude-haiku-4-5',
           max_tokens: 256,
-          system: `You are a filter parser for an influencer discovery platform.
-Extract search filters from a natural language query and return ONLY a valid JSON object.
-Do not include any explanation, markdown, or extra text — just raw JSON.
+          temperature: 0,
+          // Filter object is flat (no nested {}), so the first '}' closes it.
+          // Stopping there discards any trailing prose the model may add.
+          stop_sequences: ['}'],
+          system: `You convert a natural-language influencer-search query into a JSON filter object.
+Return ONLY the raw JSON object — no markdown, no code fences, no prose.
 
-Available fields:
-- platforms: string[] (TikTok, Instagram, YouTube, Facebook, X, Lemon8, LinkedIn)
-- categories: string[] — return an array of matched categories, max 3. Pick from: Travel, Food, Beauty, Lifestyle, Fashion, Tech, Gaming, Fitness, Entertainment. Always return as array even for one category e.g. ["Travel"]
-- followerRange: string (Nano, Micro, Mid, Macro, Mega) — only use when user explicitly mentions a tier name like "micro influencer" or "macro influencer". Do NOT use for "over X followers" or "at least X followers" queries
-- minFollowers: number — use for "over X", "at least X", "more than X followers" queries instead of followerRange
-- minAverageViews: number
-- minEngagementRate: number (percentage e.g. 3.5)
-- minGrowthRate: number (percentage)
-- minQualityScore: number (0-100)
-- minPerformanceScore: number (0-100)
-- maxRatePerPost: number (THB)
-- minResponseRate: number (0-100)
-- audienceGender: string (Male, Female, Mixed)
-- audienceAgeGroup: string (18-24, 25-34, 35-44, 45+) — "teen" or "teenage" maps to "18-24"
-- country: string
-- city: string
-- stylePresent: string (Storytelling, Review, Tutorial, Vlog, Experiment)
-- campaignIntents: string[] (Awareness, Engagement, Conversion, UGC)
-- keyword: string — ONLY use for specific brand names, product names, or creator names explicitly mentioned. NEVER put leftover or unmatched query text here.
+Rules:
+- The query may be in Thai, English, or any language, or a mix. Interpret its MEANING regardless of language. All enum values below and the "country" value MUST be output in English (e.g. a Thai travel query → categories:["Travel"], "ประเทศไทย" → country:"Thailand"). The ONE exception is "keyword": copy proper names (brands, products, creators) VERBATIM as the user wrote them — never translate or transliterate them.
+- Output only fields the query clearly and explicitly states. If you are unsure about a field, OMIT it. Never guess, never fill in defaults, never infer a filter the user did not ask for. Fewer correct fields beat more speculative ones.
+- Use ONLY the field names and allowed values listed below. Never invent a field name or a value outside the allowed set. If a requested value is not in an allowed set, omit that field.
+- Enum values are case-sensitive: copy them EXACTLY as written.
+- Return {} if nothing maps.
 
-Only include fields clearly mentioned or strongly implied. Return {} if nothing can be extracted.`,
+Fields:
+- platforms: string[] — subset of exactly: ["tiktok","instagram","youtube","facebook","x","lemon8"]. Lowercase. Map "twitter"/"X"/"ทวิตเตอร์" → "x". If the user names any platform NOT in this list (e.g. LinkedIn, Snapchat, Pinterest, Threads, Twitch), OMIT it entirely — never include it and never substitute a similar one.
+- categories: string[], max 3 — subset of exactly: ${CATEGORY_TAGS.join(', ')}. Always an array, even for one: ["Travel"].
+- followerRange: one of exactly "Nano" | "Micro" | "Mid" | "Macro" | "Mega" (case-sensitive). ONLY when the user names a tier ("micro influencer", "macro creator"). Do NOT use it for numeric thresholds like "over 500k" — use minFollowers for those. Never both.
+- minFollowers: integer — for "over X", "at least X", "more than X followers". Expand shorthand: "1M"/"1 million" → 1000000, "10k" → 10000.
+- minAverageViews: integer.
+- minEngagementRate: number — percentage as a plain number ("at least 3.5%" → 3.5).
+- minGrowthRate: number — percentage as a plain number.
+- minQualityScore: number 0-100.
+- minPerformanceScore: number 0-100.
+- maxRatePerPost: integer — max price per post in THB.
+- minResponseRate: number 0-100.
+- audienceGender: one of exactly "Male" | "Female" | "Mixed".
+- audienceAgeGroup: one of exactly "18-24" | "25-34" | "35-44" | "45+" (case- and format-exact). "teen"/"teenage" → "18-24".
+- country: string.
+- stylePresent: one of exactly: ${STYLE_TAGS.join(', ')}.
+- keyword: string — ONLY a specific brand, product, or creator name explicitly named. NEVER put leftover, unmatched, or arbitrary query text here. If the query is gibberish, a greeting, or has no recognizable filter criteria, return {} — do not salvage it into keyword.
+
+Examples:
+Query: "micro travel influencers on tiktok in thailand"
+{"platforms":["tiktok"],"categories":["Travel"],"followerRange":"Micro","country":"Thailand"}
+
+Query: "youtube gaming creators with over 1 million followers and 5% engagement"
+{"platforms":["youtube"],"categories":["Gaming"],"minFollowers":1000000,"minEngagementRate":5}
+
+Query: "female beauty creators aged 18-24 who do product reviews under 20000 baht per post"
+{"categories":["Beauty"],"audienceGender":"Female","audienceAgeGroup":"18-24","stylePresent":"Review","maxRatePerPost":20000}
+
+Query (Thai): "อินฟลูสายอาหารในไอจี มีผู้ติดตามมากกว่า 50000 คน"
+{"platforms":["instagram"],"categories":["Food"],"minFollowers":50000}
+
+Query: "influencers on linkedin"
+{}
+
+Query: "asdfgh hello random text 12345"
+{}`,
           messages: [
             {
               role: 'user',
               content: `Parse this search query into filters: "${query}"`,
+            },
+            // Prefill the assistant turn with '{' to force a raw JSON object
+            // (haiku-4-5 supports prefill). We re-prepend it before parsing.
+            {
+              role: 'assistant',
+              content: '{',
             },
           ],
         }),
       });
 
       const data = await response.json();
-      const text = data.content?.[0]?.text ?? '{}';
-      const clean = text
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '')
-        .trim();
-      const parsed = JSON.parse(clean);
+      // Assistant turn was prefilled with '{' and generation stops at '}',
+      // so wrap the completion back into a complete object before parsing.
+      const completion = data.content?.[0]?.text ?? '';
+      const parsed = JSON.parse(`{${completion}}`);
       this.logger.log(`Smart search parsed: ${JSON.stringify(parsed)}`);
       return parsed;
     } catch (err) {
-      this.logger.error('Claude parsing failed, returning empty filters', err);
+      this.logger.error(
+        `Claude parsing failed, returning empty filters (query="${query}")`,
+        err,
+      );
       return {};
     }
   }
