@@ -4,8 +4,10 @@ import {
   InternalServerErrorException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { CreateCampaignDto } from '../campaigns/dto/create-campaign.dto';
 import { GenerateBriefDto } from './dto/generate-brief.dto';
@@ -38,6 +40,7 @@ export class SmartPlanService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
     private readonly campaignsService: CampaignsService,
   ) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -159,6 +162,65 @@ CRITICAL RULES:
    * TODO: for a true single-transaction guarantee, refactor CampaignsService.createCampaign
    *       to accept an optional Prisma transaction client and call it inside $transaction here.
    */
+  /**
+   * Upload a brief reference image before the campaign exists. Goes straight to
+   * the permanent brief-images/ prefix (public); the returned URL is later passed
+   * to create-campaign as briefImageUrl. If the wizard is abandoned the object is
+   * orphaned — the daily sweepOrphanBriefImages() cron reclaims it.
+   */
+  async uploadBriefImage(
+    file: Express.Multer.File,
+  ): Promise<{ url: string }> {
+    const objectPath = `brief-images/${this.storage.buildFilename(file.originalname)}`;
+    const url = await this.storage.uploadPublic(
+      objectPath,
+      file.buffer,
+      file.mimetype,
+    );
+    return { url };
+  }
+
+  /**
+   * Reclaim brief-image objects left behind by abandoned wizards. A brief image
+   * is only committed when create-campaign writes it to Campaign.briefImageUrl,
+   * so any brief-images/ object older than 24h that no campaign references is an
+   * orphan. Runs daily; failures (e.g. storage unconfigured) are logged, not thrown.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  async sweepOrphanBriefImages(): Promise<void> {
+    try {
+      const objects = await this.storage.listPublic('brief-images');
+      if (!objects.length) return;
+
+      const referenced = await this.prisma.campaign.findMany({
+        where: { briefImageUrl: { not: null } },
+        select: { briefImageUrl: true },
+      });
+      // Match on the trailing object path so it works regardless of the URL host.
+      const referencedPaths = new Set(
+        referenced
+          .map((c) => c.briefImageUrl)
+          .filter((u): u is string => !!u)
+          .map((u) => u.slice(u.indexOf('brief-images/'))),
+      );
+
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      let removed = 0;
+      for (const obj of objects) {
+        if (referencedPaths.has(obj.path)) continue;
+        const created = obj.createdAt ? Date.parse(obj.createdAt) : 0;
+        if (created && created > cutoff) continue; // too new — may still be committed
+        await this.storage.deletePublicPath(obj.path);
+        removed++;
+      }
+      if (removed) this.logger.log(`Swept ${removed} orphan brief image(s)`);
+    } catch (err) {
+      this.logger.warn(
+        `Brief-image sweep failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
   async createCampaignFromPlan(
     userId: string,
     dto: CreateFromPlanDto,

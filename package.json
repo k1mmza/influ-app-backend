@@ -36,6 +36,7 @@
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.27",
     "@prisma/client": "^6.19.3",
+    "@supabase/supabase-js": "^2.110.2",
     "bcrypt": "^6.0.0",
     "bullmq": "^5.78.0",
     "class-transformer": "^0.5.1",

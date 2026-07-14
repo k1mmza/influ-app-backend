@@ -112,8 +112,14 @@ function build(user: any, conv: any = CONV, draft: any = DRAFT) {
   // client, so assertions on prisma.* observe the in-transaction writes.
   prisma.$transaction = jest.fn().mockImplementation((cb: any) => cb(prisma));
   const gateway: any = { emitDraftsUpdate: jest.fn() };
-  const service = new DraftsService(prisma, gateway);
-  return { service, prisma, gateway };
+  const storage: any = {
+    uploadPrivate: jest.fn().mockResolvedValue(undefined),
+    signPrivate: jest.fn().mockImplementation((p: string | null) => p ?? null),
+    deletePrivate: jest.fn().mockResolvedValue(undefined),
+    buildFilename: jest.fn().mockReturnValue('file.jpg'),
+  };
+  const service = new DraftsService(prisma, storage, gateway);
+  return { service, prisma, storage, gateway };
 }
 
 describe('DraftsService permissions', () => {

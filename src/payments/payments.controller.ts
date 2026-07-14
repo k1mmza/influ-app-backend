@@ -11,19 +11,14 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
+import { memoryStorage } from 'multer';
 import { extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-
-// Same upload pipeline + directory as conversations/drafts — served via /uploads (Phase 1 fix).
-const BASE = process.env.UPLOAD_BASE_DIR || './uploads';
-const UPLOAD_DIR = `${BASE}/conversations`;
 
 @Controller('conversations/:id/payments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -50,22 +45,7 @@ export class PaymentsController {
   @Roles(UserRole.BRAND, UserRole.AGENCY)
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, file, cb) => {
-          try {
-            if (!existsSync(UPLOAD_DIR))
-              mkdirSync(UPLOAD_DIR, { recursive: true });
-            cb(null, UPLOAD_DIR);
-          } catch (err) {
-            cb(err as Error, UPLOAD_DIR);
-          }
-        },
-        filename: (req, file, cb) =>
-          cb(
-            null,
-            `${Date.now()}-${Math.round(Math.random() * 1e6)}${extname(file.originalname)}`,
-          ),
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowed = /pdf|jpeg|jpg|png|webp/i;
@@ -79,12 +59,11 @@ export class PaymentsController {
     @Param('paymentId') paymentId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    const fileUrl = `/uploads/conversations/${file.filename}`;
     return this.paymentsService.uploadProof(
       req.user.userId,
       conversationId,
       paymentId,
-      fileUrl,
+      file,
     );
   }
 

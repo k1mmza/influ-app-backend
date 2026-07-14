@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
+import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './auth/auth.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { InfluencersModule } from './influencers/influencers.module';
@@ -34,6 +35,7 @@ import { ClientBrandsModule } from './client-brands/client-brands.module';
     // here; the job itself is gated behind YOUTUBE_SYNC_ENABLED (default OFF).
     ScheduleModule.forRoot(),
     PrismaModule,
+    StorageModule,
     AuthModule,
     DashboardModule,
     InfluencersModule,

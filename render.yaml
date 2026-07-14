@@ -70,12 +70,19 @@ services:
           name: influ-app-redis      #          (To use external Redis e.g. Upstash instead: delete this
           property: connectionString #           fromService block + the keyvalue service, and set sync:false.)
 
-      # --- Uploads ----------------------------------------------------------
-      - key: UPLOAD_BASE_DIR         # relative path — no disk on free tier. Writes go
-        value: ./uploads             #       under the app's working dir; EPHEMERAL
-                                     #       (vanish on restart/redeploy) but writable,
-                                     #       so upload handlers won't crash. The real
-                                     #       render.yaml uses /data/uploads (mounted disk).
+      # --- Uploads (Supabase Storage) --------------------------------------
+      # Uploads now go to Supabase Storage buckets (public-assets / private-files).
+      - key: SUPABASE_URL            # SECRET — your Supabase project URL (https://<ref>.supabase.co)
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY  # SECRET — service-role key; bypasses RLS, backend-only.
+        sync: false                     #          NEVER expose to the frontend.
+
+      # --- Legacy local-disk uploads (backfill only) -----------------------
+      # No disk on free tier, so this is relative + EPHEMERAL. Only used so the
+      # one-time backfill (prisma/backfill-storage.ts) can read any old files;
+      # normal uploads go to Supabase Storage above.
+      - key: UPLOAD_BASE_DIR         # relative path — no disk on free tier (ephemeral)
+        value: ./uploads
 
       # --- Sync feature flags — PINNED OFF ---------------------------------
       # Deployment must NOT enable these. Verify the deploy, then flip in the

@@ -15,20 +15,13 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { AddCampaignShortlistDto } from './dto/add-campaign-shortlist.dto';
 import { UpdateCampaignShortlistDto } from './dto/update-campaign-shortlist.dto';
-
-const COVER_DIR = `${process.env.UPLOAD_BASE_DIR || './uploads'}/campaign-covers`;
-// Same served location as the create-flow brief-image upload (POST /smart-plan/brief-image),
-// so all brief reference images live under one directory regardless of entry point.
-const BRIEF_IMAGE_DIR = `${process.env.UPLOAD_BASE_DIR || './uploads'}/brief-images`;
 
 @Controller('campaigns')
 @UseGuards(JwtAuthGuard)
@@ -70,21 +63,7 @@ export class CampaignsController {
   @Post(':id/cover')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, file, cb) => {
-          try {
-            if (!existsSync(COVER_DIR))
-              mkdirSync(COVER_DIR, { recursive: true });
-            cb(null, COVER_DIR);
-          } catch (err) {
-            cb(err as Error, COVER_DIR);
-          }
-        },
-        filename: (req, file, cb) => {
-          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-          cb(null, `${unique}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -97,8 +76,7 @@ export class CampaignsController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    const fileUrl = `/uploads/campaign-covers/${file.filename}`;
-    return this.campaignsService.uploadCoverImage(req.user.userId, id, fileUrl);
+    return this.campaignsService.uploadCoverImage(req.user.userId, id, file);
   }
 
   // Upload + persist a brief reference image onto an existing campaign in one call
@@ -106,21 +84,7 @@ export class CampaignsController {
   @Post(':id/brief-image')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, file, cb) => {
-          try {
-            if (!existsSync(BRIEF_IMAGE_DIR))
-              mkdirSync(BRIEF_IMAGE_DIR, { recursive: true });
-            cb(null, BRIEF_IMAGE_DIR);
-          } catch (err) {
-            cb(err as Error, BRIEF_IMAGE_DIR);
-          }
-        },
-        filename: (req, file, cb) => {
-          const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-          cb(null, `${unique}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -133,8 +97,7 @@ export class CampaignsController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    const fileUrl = `/uploads/brief-images/${file.filename}`;
-    return this.campaignsService.uploadBriefImage(req.user.userId, id, fileUrl);
+    return this.campaignsService.uploadBriefImage(req.user.userId, id, file);
   }
 
   @Delete(':id')

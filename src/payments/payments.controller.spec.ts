@@ -114,7 +114,7 @@ describe('PaymentsController', () => {
         TEST_USER_ID,
         CONV,
         PAYMENT,
-        expect.stringContaining('/uploads/conversations/'),
+        expect.objectContaining({ originalname: 'receipt.jpg' }),
       );
     });
   });

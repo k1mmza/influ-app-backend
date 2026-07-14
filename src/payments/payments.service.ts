@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { ChatGateway } from '../conversations/chat.gateway';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 
@@ -25,6 +26,7 @@ type Participant = {
 export class PaymentsService {
   constructor(
     private prisma: PrismaService,
+    private storage: StorageService,
     private chatGateway: ChatGateway,
   ) {}
 
@@ -80,10 +82,17 @@ export class PaymentsService {
 
   async list(userId: string, conversationId: string) {
     const { conv } = await this.resolveParticipant(userId, conversationId);
-    return this.prisma.payment.findMany({
+    const payments = await this.prisma.payment.findMany({
       where: { campaignId: conv.campaignId, influencerId: conv.influencerId },
       orderBy: { createdAt: 'asc' },
     });
+    // proofUrl is a private storage path — sign each for the client.
+    return Promise.all(
+      payments.map(async (p) => ({
+        ...p,
+        proofUrl: await this.storage.signPrivate(p.proofUrl),
+      })),
+    );
   }
 
   async create(userId: string, conversationId: string, dto: CreatePaymentDto) {
@@ -128,7 +137,7 @@ export class PaymentsService {
     userId: string,
     conversationId: string,
     paymentId: string,
-    fileUrl: string,
+    file: Express.Multer.File,
   ) {
     const { isBrandSide, conv } = await this.resolveParticipant(
       userId,
@@ -142,12 +151,17 @@ export class PaymentsService {
     if (payment.status === 'PAID')
       throw new BadRequestException('Payment is already confirmed as paid');
 
+    // Private file: store the storage path, replace-delete the old proof.
+    const objectPath = `payment-proofs/${this.storage.buildFilename(file.originalname)}`;
+    await this.storage.uploadPrivate(objectPath, file.buffer, file.mimetype);
+
     const updated = await this.prisma.payment.update({
       where: { id: paymentId },
-      data: { proofUrl: fileUrl, status: 'AWAITING_CONFIRMATION' },
+      data: { proofUrl: objectPath, status: 'AWAITING_CONFIRMATION' },
     });
+    await this.storage.deletePrivate(payment.proofUrl);
     this.chatGateway.emitPaymentsUpdate(conversationId);
-    return updated;
+    return { ...updated, proofUrl: await this.storage.signPrivate(objectPath) };
   }
 
   /**

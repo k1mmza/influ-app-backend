@@ -5,11 +5,15 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class ProfileService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private storage: StorageService,
+  ) {}
 
   // ─── GET PROFILE ─────────────────────────────────────────────────────────────
   async getProfile(userId: string) {
@@ -37,6 +41,15 @@ export class ProfileService {
     if (user.role === 'BRAND') profile = user.brandProfile;
     else if (user.role === 'AGENCY') profile = user.agencyProfile;
     else if (user.role === 'INFLUENCER') profile = user.influencerProfile;
+
+    // rateCardFileUrl is a private storage path — hand the caller a short-lived
+    // signed URL instead of the raw path.
+    if (profile?.rateCardFileUrl) {
+      profile = {
+        ...profile,
+        rateCardFileUrl: await this.storage.signPrivate(profile.rateCardFileUrl),
+      };
+    }
 
     // Expose platform accounts with stats — no raw tokens
     const platforms =
@@ -158,16 +171,33 @@ export class ProfileService {
   }
 
   // ─── UPLOAD AVATAR ────────────────────────────────────────────────────────────
-  async uploadAvatarFile(userId: string, fileUrl: string) {
+  // Public asset: store the absolute public URL. Replace = upload new, repoint the
+  // DB, then best-effort delete the old object so it doesn't orphan.
+  async uploadAvatarFile(userId: string, file: Express.Multer.File) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarUrl: true },
+    });
+
+    const objectPath = `avatars/${this.storage.buildFilename(file.originalname)}`;
+    const avatarUrl = await this.storage.uploadPublic(
+      objectPath,
+      file.buffer,
+      file.mimetype,
+    );
+
     await this.prisma.user.update({
       where: { id: userId },
-      data: { avatarUrl: fileUrl },
+      data: { avatarUrl },
     });
-    return { avatarUrl: fileUrl };
+
+    await this.storage.deletePublicByUrl(existing?.avatarUrl);
+    return { avatarUrl };
   }
 
   // ─── UPLOAD RATE CARD FILE ────────────────────────────────────────────────────
-  async uploadRateCardFile(userId: string, fileUrl: string) {
+  // Private file: store the storage path (signed on read). Replace deletes the old.
+  async uploadRateCardFile(userId: string, file: Express.Multer.File) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.role !== 'INFLUENCER')
@@ -181,23 +211,34 @@ export class ProfileService {
         'Influencer profile not found — complete your profile first',
       );
 
+    const objectPath = `rate-cards/${this.storage.buildFilename(file.originalname)}`;
+    await this.storage.uploadPrivate(objectPath, file.buffer, file.mimetype);
+
     await this.prisma.influencerProfile.update({
       where: { userId },
-      data: { rateCardFileUrl: fileUrl },
+      data: { rateCardFileUrl: objectPath },
     });
 
-    return { rateCardFileUrl: fileUrl };
+    await this.storage.deletePrivate(profile.rateCardFileUrl);
+    // Return a signed URL (the read shape) so the client can render it immediately.
+    return { rateCardFileUrl: await this.storage.signPrivate(objectPath) };
   }
 
   async deleteRateCardFile(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || user.role !== 'INFLUENCER') throw new ForbiddenException();
 
+    const profile = await this.prisma.influencerProfile.findUnique({
+      where: { userId },
+      select: { rateCardFileUrl: true },
+    });
+
     await this.prisma.influencerProfile.updateMany({
       where: { userId },
       data: { rateCardFileUrl: null },
     });
 
+    await this.storage.deletePrivate(profile?.rateCardFileUrl);
     return { message: 'Rate card removed' };
   }
 
@@ -211,6 +252,8 @@ export class ProfileService {
 
     // Soft delete — set isDeleted flag instead of removing the row
     // This preserves campaign history, reviews, tracking results etc.
+    // Storage objects (avatar, rate card) are intentionally NOT deleted here —
+    // a soft-deleted account may be restored, and its files must survive.
     await this.prisma.user.update({
       where: { id: userId },
       data: { isDeleted: true },
