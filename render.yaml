@@ -99,6 +99,8 @@ services:
         value: "false"
       - key: TIKTOK_SYNC_ENABLED
         value: "false"
+      - key: SWAGGER_ENABLED
+        value: "false"
 
       # --- AI (Smart Plan / analysis / smart search) -----------------------
       - key: ANTHROPIC_API_KEY       # SECRET — required for Smart Plan + AI search; feature-level

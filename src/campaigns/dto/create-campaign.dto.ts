@@ -8,65 +8,81 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CampaignRequirementDto } from './campaign-requirement.dto';
 
 export class CreateCampaignDto {
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   name!: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   objective?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   budget?: number;
 
+  @ApiPropertyOptional({ description: 'PUBLIC or PRIVATE (not enforced by validation — free string in the schema).' })
   @IsOptional()
   @IsString()
   visibility?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   paymentType?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   keyMessage?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   doAndDont?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   deliverables?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   applyDeadline?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   submissionDate?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   reviewDate?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   paymentDate?: string;
 
+  @ApiPropertyOptional({ description: 'Reference image shown to the creator in the conversation brief — distinct from the cover image.' })
   @IsOptional()
   @IsString()
   briefImageUrl?: string;
 
+  @ApiPropertyOptional({ description: 'Owning ClientBrand id. Required by the service even though optional on the DTO.' })
   @IsOptional()
   @IsString()
   clientBrandId?: string;
 
+  @ApiPropertyOptional({ type: () => CampaignRequirementDto, isArray: true })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
