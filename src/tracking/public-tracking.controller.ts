@@ -1,5 +1,6 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { TrackingService } from './tracking.service';
 
 /**
@@ -13,11 +14,19 @@ import { TrackingService } from './tracking.service';
  * tokens can't be brute-forced/scraped at scale. Throttling is applied ONLY
  * here — the authenticated API is untouched.
  */
+@ApiTags('Public Tracking')
 @Controller('public/tracking')
 @UseGuards(ThrottlerGuard)
 export class PublicTrackingController {
   constructor(private readonly tracking: TrackingService) {}
 
+  @ApiOperation({
+    summary: 'Get a shared tracking report',
+    description:
+      'Public — no authentication required. Resolves a TrackingShareLink token (usable only while revokedAt is null and expiresAt is null or in the future). Rate limited to 30 requests/minute per IP.',
+  })
+  @ApiParam({ name: 'token', description: 'TrackingShareLink token (public lookup key, not the campaign id)' })
+  @ApiResponse({ status: 200, description: 'Public tracking report.' })
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get(':token')
   getPublicReport(@Param('token') token: string) {

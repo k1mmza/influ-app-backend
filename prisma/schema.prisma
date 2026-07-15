@@ -48,6 +48,7 @@ model User {
 
   // User Related
   wallet           Wallet?
+  sessions         Session[]
   notifications    Notification[]
   sentReviews      Review[]       @relation("ReviewsFrom")
   receivedReviews  Review[]       @relation("ReviewsTo")
@@ -56,6 +57,27 @@ model User {
   campaignShareLinks CampaignShareLink[]
   campaignShortlists CampaignShortlist[]
   campaignShortlistShareLinks CampaignShortlistShareLink[]
+}
+
+// AUTH SESSIONS (refresh-token store for multi-account / silent-refresh)
+// One row per issued refresh token. We store only a SHA-256 hash of the raw
+// token (never the raw value) — refresh tokens are high-entropy random strings,
+// so a fast keyed hash is safe and, unlike bcrypt, lets us look a session up by
+// its hash. Rotation on /auth/refresh sets revokedAt on the old row and inserts
+// a fresh one; /auth/logout sets revokedAt on the targeted row only.
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique
+  userAgent        String?
+  ip               String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model BrandProfile {

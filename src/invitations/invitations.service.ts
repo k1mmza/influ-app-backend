@@ -111,7 +111,7 @@ export class InvitationsService {
     // the reliable guard, not `isExternal` alone.
     if (!influencer.userId) {
       throw new BadRequestException(
-        'This creator is not a registered InfluApp user yet and cannot be invited.',
+        'This creator is not a registered Inflique user yet and cannot be invited.',
       );
     }
 
