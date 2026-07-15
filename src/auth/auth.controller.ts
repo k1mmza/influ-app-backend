@@ -5,17 +5,27 @@ import {
   Body,
   UseGuards,
   Request,
+  Req,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request as ExpressRequest, Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { AuthService } from './auth.service';
+import { AuthService, SessionMeta } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SelectRoleDto } from './dto/select-role.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
+
+/** Pull userAgent/ip off the request for the Session row (future "manage sessions" UI). */
+function sessionMeta(req: ExpressRequest): SessionMeta {
+  return {
+    userAgent: req.headers['user-agent'],
+    ip: req.ip,
+  };
+}
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -27,8 +37,8 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Validation failed.', type: ErrorResponseDto })
   @ApiResponse({ status: 409, description: 'Email already exists.', type: ErrorResponseDto })
   @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  register(@Body() dto: RegisterDto, @Req() req: ExpressRequest) {
+    return this.authService.register(dto, sessionMeta(req));
   }
 
   @ApiOperation({ summary: 'Log in with email and password', description: 'Public — no authentication required.' })
@@ -40,8 +50,20 @@ export class AuthController {
     type: ErrorResponseDto,
   })
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Req() req: ExpressRequest) {
+    return this.authService.login(dto, sessionMeta(req));
+  }
+
+  // Exchange a refresh token for a new access token + rotated refresh token.
+  @Post('refresh')
+  refresh(@Body() dto: RefreshTokenDto, @Req() req: ExpressRequest) {
+    return this.authService.refresh(dto.refresh_token, sessionMeta(req));
+  }
+
+  // Revoke this one session server-side (real logout, not just client-side).
+  @Post('logout')
+  logout(@Body() dto: RefreshTokenDto) {
+    return this.authService.logout(dto.refresh_token);
   }
 
   @ApiBearerAuth('jwt')
@@ -70,13 +92,12 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleCallback(@Request() req, @Res() res: Response) {
-    const { access_token } = await this.authService.generateTokenForUser(
-      req.user,
-    );
+    const { access_token, refresh_token } =
+      await this.authService.issueTokensForUser(req.user, sessionMeta(req));
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const isRoleSelected = req.user.isRoleSelected;
     res.redirect(
-      `${frontendUrl}/auth/callback?token=${access_token}&roleSelected=${isRoleSelected}`,
+      `${frontendUrl}/auth/callback?token=${access_token}&refresh=${refresh_token}&roleSelected=${isRoleSelected}`,
     );
   }
 }

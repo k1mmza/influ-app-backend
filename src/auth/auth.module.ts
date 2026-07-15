@@ -11,7 +11,10 @@ import { GoogleStrategy } from './strategies/google.strategy';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'super-secret-key-change-me-later',
-      signOptions: { expiresIn: '1d' },
+      // Access tokens are now short-lived; longevity comes from the refresh
+      // token + POST /auth/refresh rotation (see AuthService). Individual signs
+      // pass ACCESS_TOKEN_TTL explicitly, so this is just a safe default.
+      signOptions: { expiresIn: '15m' },
     }),
   ],
   providers: [AuthService, JwtStrategy, GoogleStrategy],

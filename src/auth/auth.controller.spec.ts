@@ -9,6 +9,8 @@ const svc = {
   register: jest.fn(),
   login: jest.fn(),
   selectRole: jest.fn(),
+  refresh: jest.fn(),
+  logout: jest.fn(),
 };
 
 async function buildApp(jwtMock: object) {
@@ -41,11 +43,10 @@ describe('AuthController', () => {
         .post('/auth/register')
         .send({ email: 'a@a.com', password: 'password123', name: 'Test User' })
         .expect(201);
-      expect(svc.register).toHaveBeenCalledWith({
-        email: 'a@a.com',
-        password: 'password123',
-        name: 'Test User',
-      });
+      expect(svc.register).toHaveBeenCalledWith(
+        { email: 'a@a.com', password: 'password123', name: 'Test User' },
+        expect.any(Object), // session metadata (userAgent/ip)
+      );
     });
 
     it('400 on missing email', async () => {
@@ -97,6 +98,45 @@ describe('AuthController', () => {
       await request(app.getHttpServer())
         .post('/auth/login')
         .send({ email: 'bad', password: 'pass' })
+        .expect(400);
+    });
+  });
+
+  describe('POST /auth/refresh', () => {
+    it('201 and returns new tokens on valid body', async () => {
+      svc.refresh.mockResolvedValueOnce({
+        access_token: 'a2',
+        refresh_token: 'r2',
+      });
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refresh_token: 'r1' })
+        .expect(201);
+      expect(svc.refresh).toHaveBeenCalledWith('r1', expect.any(Object));
+    });
+
+    it('400 on missing refresh_token', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({})
+        .expect(400);
+    });
+  });
+
+  describe('POST /auth/logout', () => {
+    it('201 and revokes the session', async () => {
+      svc.logout.mockResolvedValueOnce({ success: true });
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .send({ refresh_token: 'r1' })
+        .expect(201);
+      expect(svc.logout).toHaveBeenCalledWith('r1');
+    });
+
+    it('400 on missing refresh_token', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .send({})
         .expect(400);
     });
   });
