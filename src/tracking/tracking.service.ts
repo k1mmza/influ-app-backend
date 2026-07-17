@@ -100,6 +100,7 @@ export class TrackingService {
         id: c.id,
         name: c.name,
         status: c.status,
+        coverImageUrl: c.coverImageUrl,
         influencerCount: new Set(latest.map((r) => r.influencerId)).size,
         totalViews,
         avgEngagementRate: Number(avgEngagementRate.toFixed(1)),
