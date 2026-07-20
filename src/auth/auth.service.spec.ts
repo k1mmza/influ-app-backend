@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 import * as bcrypt from 'bcrypt';
 
 jest.mock('bcrypt');
@@ -14,28 +15,46 @@ const sha256 = (raw: string) =>
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: {
-    user: { findUnique: jest.Mock; findFirst: jest.Mock };
+    user: { findUnique: jest.Mock; findFirst: jest.Mock; update: jest.Mock };
     session: {
       findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
       updateMany: jest.Mock;
     };
+    passwordResetToken: {
+      findUnique: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      deleteMany: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
+  let email: { sendPasswordResetEmail: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
-      user: { findUnique: jest.fn(), findFirst: jest.fn() },
+      user: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn().mockResolvedValue({ id: 'u1' }),
+      },
       session: {
         findUnique: jest.fn(),
         create: jest.fn().mockResolvedValue({ id: 'new-sess' }),
         update: jest.fn().mockResolvedValue({ id: 'old-sess' }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      passwordResetToken: {
+        findUnique: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: 'prt1' }),
+        update: jest.fn().mockResolvedValue({ id: 'prt1' }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       // Pass-through: the array elements are already-resolved mock promises.
       $transaction: jest.fn().mockImplementation((ops) => Promise.resolve(ops)),
     };
+    email = { sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -43,8 +62,12 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: JwtService,
-          useValue: { sign: jest.fn(), signAsync: jest.fn().mockResolvedValue('tok') },
+          useValue: {
+            sign: jest.fn(),
+            signAsync: jest.fn().mockResolvedValue('tok'),
+          },
         },
+        { provide: EmailService, useValue: email },
       ],
     }).compile();
 
@@ -83,7 +106,10 @@ describe('AuthService', () => {
       });
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
 
-      const res = await service.login({ email: 'a@b.com', password: 'pw' } as any);
+      const res = await service.login({
+        email: 'a@b.com',
+        password: 'pw',
+      });
       expect(res.access_token).toBe('tok');
       expect(typeof res.refresh_token).toBe('string');
       expect(res.refresh_token.length).toBeGreaterThan(0);
@@ -216,6 +242,172 @@ describe('AuthService', () => {
       await expect(service.logout('unknown')).resolves.toEqual({
         success: true,
       });
+    });
+  });
+
+  describe('forgotPassword', () => {
+    const activeUser = {
+      id: 'u1',
+      email: 'a@b.com',
+      name: 'A',
+      password: 'existing-hash',
+      isDeleted: false,
+    };
+
+    /** Pull the raw token out of the reset link handed to the email service. */
+    const emailedRawToken = () => {
+      const link = email.sendPasswordResetEmail.mock.calls[0][1] as string;
+      return new URL(link).searchParams.get('token') as string;
+    };
+
+    it('valid, active, password-based account → generic success + emailed link; only the HASH is stored', async () => {
+      prisma.user.findUnique.mockResolvedValue(activeUser);
+
+      const res = await service.forgotPassword('a@b.com');
+
+      expect(res).toEqual({ success: true });
+      // A token row is created and an email is sent.
+      expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(1);
+      expect(email.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+
+      // The persisted value is the SHA-256 hash of the raw token in the link —
+      // the raw token itself is NEVER stored.
+      const raw = emailedRawToken();
+      const stored = prisma.passwordResetToken.create.mock.calls[0][0].data
+        .tokenHash as string;
+      expect(stored).toBe(sha256(raw));
+      expect(stored).not.toBe(raw);
+      // Prior outstanding tokens for this user are invalidated first.
+      expect(prisma.passwordResetToken.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', usedAt: null },
+      });
+    });
+
+    it('non-existent email → same generic success, no token, no email (no enumeration)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      const res = await service.forgotPassword('nobody@b.com');
+
+      expect(res).toEqual({ success: true });
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+      expect(email.sendPasswordResetEmail).not.toHaveBeenCalled();
+    });
+
+    it('OAuth-only account (password === null) → generic success, no token, no email', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...activeUser,
+        password: null,
+      });
+
+      const res = await service.forgotPassword('a@b.com');
+
+      expect(res).toEqual({ success: true });
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+      expect(email.sendPasswordResetEmail).not.toHaveBeenCalled();
+    });
+
+    it('soft-deleted account → generic success, no token, no email', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...activeUser,
+        isDeleted: true,
+      });
+
+      const res = await service.forgotPassword('a@b.com');
+
+      expect(res).toEqual({ success: true });
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+      expect(email.sendPasswordResetEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resetPassword', () => {
+    const validRecord = () => ({
+      id: 'prt1',
+      userId: 'u1',
+      tokenHash: sha256('raw-reset'),
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { id: 'u1', isDeleted: false },
+    });
+
+    it('valid token → re-hashes password for the token owner, consumes token, revokes sessions', async () => {
+      prisma.passwordResetToken.findUnique.mockResolvedValue(validRecord());
+      (bcrypt.hash as jest.Mock).mockResolvedValue('new-hash');
+
+      const res = await service.resetPassword('raw-reset', 'newPassword1');
+
+      expect(res).toEqual({ success: true });
+      // Password updated on the token's OWN userId — never a client-supplied id.
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { password: 'new-hash' },
+      });
+      // Token consumed (single-use).
+      expect(prisma.passwordResetToken.update).toHaveBeenCalledWith({
+        where: { id: 'prt1' },
+        data: { usedAt: expect.any(Date) },
+      });
+      // All active sessions revoked.
+      expect(prisma.session.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    });
+
+    it('looks the token up by its HASH, never the raw value', async () => {
+      prisma.passwordResetToken.findUnique.mockResolvedValue(validRecord());
+      (bcrypt.hash as jest.Mock).mockResolvedValue('new-hash');
+
+      await service.resetPassword('raw-reset', 'newPassword1');
+
+      expect(prisma.passwordResetToken.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tokenHash: sha256('raw-reset') } }),
+      );
+    });
+
+    it('expired token → rejected, password unchanged', async () => {
+      prisma.passwordResetToken.findUnique.mockResolvedValue({
+        ...validRecord(),
+        expiresAt: new Date(Date.now() - 60_000),
+      });
+
+      await expect(
+        service.resetPassword('raw-reset', 'newPassword1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('already-used token (second use) → rejected, password unchanged', async () => {
+      prisma.passwordResetToken.findUnique.mockResolvedValue({
+        ...validRecord(),
+        usedAt: new Date(Date.now() - 1000),
+      });
+
+      await expect(
+        service.resetPassword('raw-reset', 'newPassword1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('unknown token → rejected, password unchanged', async () => {
+      prisma.passwordResetToken.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.resetPassword('nope', 'newPassword1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('token whose user was soft-deleted → rejected, password unchanged', async () => {
+      prisma.passwordResetToken.findUnique.mockResolvedValue({
+        ...validRecord(),
+        user: { id: 'u1', isDeleted: true },
+      });
+
+      await expect(
+        service.resetPassword('raw-reset', 'newPassword1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

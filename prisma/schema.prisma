@@ -57,6 +57,7 @@ model User {
   campaignShareLinks CampaignShareLink[]
   campaignShortlists CampaignShortlist[]
   campaignShortlistShareLinks CampaignShortlistShareLink[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 // AUTH SESSIONS (refresh-token store for multi-account / silent-refresh)
@@ -80,10 +81,30 @@ model Session {
   @@index([expiresAt])
 }
 
+// PASSWORD RESET TOKENS
+// One row per issued forgot-password request. Same principle as Session above:
+// we store only a SHA-256 hash of the high-entropy raw token (never the raw
+// value, which lives solely in the emailed link). A token is valid only while
+// usedAt is null and expiresAt is in the future; a successful reset sets usedAt
+// (single-use), and issuing a new token for a user invalidates their prior ones.
+// The reset action only ever acts on this row's userId — never a client-supplied id.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model BrandProfile {
   id            String   @id @default(uuid())
   userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id])
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   companyName   String?
   position      String?
   telephone     String?
@@ -99,7 +120,7 @@ model BrandProfile {
 model AgencyProfile {
   id            String   @id @default(uuid())
   userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id])
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   companyName   String?
   position      String?
   telephone     String?
@@ -115,7 +136,7 @@ model AgencyProfile {
 model InfluencerProfile {
   id                  String   @id @default(uuid())
   userId              String?  @unique
-  user                User?    @relation(fields: [userId], references: [id])
+  user                User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   bio                 String?  @db.Text
   gender              Gender?
   categories          Json?    // e.g. ["beauty", "lifestyle"]
@@ -147,7 +168,7 @@ model InfluencerProfile {
   // Claim & merge
   claimed           Boolean   @default(false)
   claimedByUserId   String?
-  claimedBy         User?     @relation("ClaimedProfile", fields: [claimedByUserId], references: [id])
+  claimedBy         User?     @relation("ClaimedProfile", fields: [claimedByUserId], references: [id], onDelete: SetNull)
 
   // Influencer Related
   platformAccounts   PlatformAccount[]
@@ -195,7 +216,7 @@ model ClientBrand {
 model Wallet {
   id                String   @id @default(uuid())
   userId            String   @unique
-  user              User     @relation(fields: [userId], references: [id])
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   balance           Float    @default(0)
   pendingPayout     Float    @default(0)
   totalEarned       Float    @default(0)
@@ -207,7 +228,7 @@ model Wallet {
 model Notification {
   id          String   @id @default(uuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id])
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type        String
   title       String
   body        String   @db.Text
@@ -329,9 +350,9 @@ model Review {
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
   fromUserId String
-  fromUser   User     @relation("ReviewsFrom", fields: [fromUserId], references: [id])
+  fromUser   User     @relation("ReviewsFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
   toUserId   String
-  toUser     User     @relation("ReviewsTo", fields: [toUserId], references: [id])
+  toUser     User     @relation("ReviewsTo", fields: [toUserId], references: [id], onDelete: Cascade)
   rating     Int
   comment    String?  @db.Text
   createdAt  DateTime @default(now())
@@ -476,7 +497,7 @@ model TrackingShareLink {
   campaignId   String
   campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   createdById  String
-  createdBy    User      @relation(fields: [createdById], references: [id])
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
   revokedAt    DateTime? // null = active
   expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
   lastViewedAt DateTime? // best-effort last public open; cheap usage signal
@@ -491,7 +512,7 @@ model CampaignShareLink {
   campaignId   String
   campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   createdById  String
-  createdBy    User      @relation(fields: [createdById], references: [id])
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
   revokedAt    DateTime? // null = active
   expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
   lastViewedAt DateTime? // best-effort last public open; cheap usage signal
@@ -524,7 +545,7 @@ model CampaignShortlist {
   recommendationNote String?           @db.Text // "why we recommend them"
   proposedPrice      Int? // proposed price in THB (integer, mirrors budget/ratePerPost convention)
   createdById        String
-  createdBy          User              @relation(fields: [createdById], references: [id])
+  createdBy          User              @relation(fields: [createdById], references: [id], onDelete: Cascade)
   addedAt            DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
@@ -542,7 +563,7 @@ model CampaignShortlistShareLink {
   campaignId   String
   campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   createdById  String
-  createdBy    User      @relation(fields: [createdById], references: [id])
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
   revokedAt    DateTime? // null = active
   expiresAt    DateTime? // finite expiry (default 90d from creation); extend by regenerating
   lastViewedAt DateTime? // best-effort last public open; cheap usage signal
@@ -602,7 +623,7 @@ model Message {
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   senderId       String
-  sender         User         @relation(fields: [senderId], references: [id])
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
   content        String       @db.Text
   attachmentUrls Json?
   isRead         Boolean      @default(false)

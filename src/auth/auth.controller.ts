@@ -8,14 +8,22 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request as ExpressRequest, Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AuthService, SessionMeta } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SelectRoleDto } from './dto/select-role.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 
@@ -32,17 +40,37 @@ function sessionMeta(req: ExpressRequest): SessionMeta {
 export class AuthController {
   constructor(private authService: AuthService) {}
 
-  @ApiOperation({ summary: 'Register a new account', description: 'Public — no authentication required.' })
-  @ApiResponse({ status: 201, description: 'Account created; returns access_token and user.' })
-  @ApiResponse({ status: 400, description: 'Validation failed.', type: ErrorResponseDto })
-  @ApiResponse({ status: 409, description: 'Email already exists.', type: ErrorResponseDto })
+  @ApiOperation({
+    summary: 'Register a new account',
+    description: 'Public — no authentication required.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Account created; returns access_token and user.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed.',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Email already exists.',
+    type: ErrorResponseDto,
+  })
   @Post('register')
   register(@Body() dto: RegisterDto, @Req() req: ExpressRequest) {
     return this.authService.register(dto, sessionMeta(req));
   }
 
-  @ApiOperation({ summary: 'Log in with email and password', description: 'Public — no authentication required.' })
-  @ApiResponse({ status: 201, description: 'Login succeeded; returns access_token and user.' })
+  @ApiOperation({
+    summary: 'Log in with email and password',
+    description: 'Public — no authentication required.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Login succeeded; returns access_token and user.',
+  })
   @ApiResponse({
     status: 401,
     description:
@@ -66,11 +94,68 @@ export class AuthController {
     return this.authService.logout(dto.refresh_token);
   }
 
+  // ─── Password reset ───────────────────────────────────────────────────────────
+  // Both endpoints are public and rate limited (ThrottlerGuard) so they can't be
+  // abused for email spam or token brute-forcing. Throttling is scoped to these
+  // two routes only — login/register are deliberately left untouched.
+
+  @ApiOperation({
+    summary: 'Request a password reset link',
+    description:
+      'Public — no authentication required. Always returns a generic success response whether or not the email maps to an account, to avoid leaking account existence. Rate limited to 5 requests / 15 min per IP.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Generic success (no enumeration).',
+  })
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 900_000 } })
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  @ApiOperation({
+    summary: 'Reset a password using a token',
+    description:
+      'Public — no authentication required. Consumes a single-use token from the emailed link and sets a new password. Rate limited to 10 requests / 15 min per IP.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Password updated; token consumed.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Token is invalid, expired, or already used.',
+    type: ErrorResponseDto,
+  })
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 900_000 } })
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.password);
+  }
+
   @ApiBearerAuth('jwt')
-  @ApiOperation({ summary: 'Select account role', description: 'One-time: sets the role (AGENCY/BRAND/INFLUENCER) for a newly created or OAuth-provisioned account.' })
-  @ApiResponse({ status: 201, description: 'Role selected; role-specific profile created.' })
-  @ApiResponse({ status: 401, description: 'Missing/invalid bearer token, or user not found.', type: ErrorResponseDto })
-  @ApiResponse({ status: 409, description: 'Role already selected.', type: ErrorResponseDto })
+  @ApiOperation({
+    summary: 'Select account role',
+    description:
+      'One-time: sets the role (AGENCY/BRAND/INFLUENCER) for a newly created or OAuth-provisioned account.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Role selected; role-specific profile created.',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Missing/invalid bearer token, or user not found.',
+    type: ErrorResponseDto,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Role already selected.',
+    type: ErrorResponseDto,
+  })
   @UseGuards(JwtAuthGuard)
   @Post('select-role')
   selectRole(@Request() req, @Body() dto: SelectRoleDto) {
@@ -79,7 +164,11 @@ export class AuthController {
 
   // ─── Google OAuth ─────────────────────────────────────────────────────────────
 
-  @ApiOperation({ summary: 'Start Google OAuth login', description: 'Public — no authentication required. Redirects the browser to Google\'s consent screen.' })
+  @ApiOperation({
+    summary: 'Start Google OAuth login',
+    description:
+      "Public — no authentication required. Redirects the browser to Google's consent screen.",
+  })
   @ApiResponse({ status: 302, description: 'Redirect to Google.' })
   @Get('google')
   @UseGuards(AuthGuard('google'))
@@ -87,8 +176,15 @@ export class AuthController {
     // Passport redirects to Google — no body needed
   }
 
-  @ApiOperation({ summary: 'Google OAuth callback', description: 'Public — no authentication required. Reached via Google\'s redirect, not a JSON API caller. Issues a JWT and redirects to the frontend with it in the query string.' })
-  @ApiResponse({ status: 302, description: 'Redirect to frontend with access token.' })
+  @ApiOperation({
+    summary: 'Google OAuth callback',
+    description:
+      "Public — no authentication required. Reached via Google's redirect, not a JSON API caller. Issues a JWT and redirects to the frontend with it in the query string.",
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirect to frontend with access token.',
+  })
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleCallback(@Request() req, @Res() res: Response) {
