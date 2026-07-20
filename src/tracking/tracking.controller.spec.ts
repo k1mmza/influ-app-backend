@@ -11,6 +11,10 @@ const svc = {
   getDetail: jest.fn(),
   recordResult: jest.fn(),
   syncYoutubeStats: jest.fn(),
+  getReport: jest.fn(),
+  createShareLink: jest.fn(),
+  listShareLinks: jest.fn(),
+  revokeShareLink: jest.fn(),
 };
 
 async function buildApp(jwtMock: object) {
@@ -107,6 +111,92 @@ describe('TrackingController', () => {
         .post('/tracking/camp-1/results')
         .send({ submittedContentId: 'content-1', views: 1.5 })
         .expect(400);
+    });
+  });
+
+  describe('GET /tracking/:campaignId/report', () => {
+    it('200 returns the client-facing tracking report', async () => {
+      svc.getReport.mockResolvedValueOnce({
+        campaign: { id: 'camp-1' },
+        progress: { totalDeliverables: 5, published: 2, remaining: 3, pctComplete: 40 },
+        summary: { totalViews: 1000, avgEngagementRate: 0.05, publishedPosts: 2 },
+        lastUpdated: '2026-01-01T00:00:00.000Z',
+        content: [],
+      });
+      const res = await request(app.getHttpServer())
+        .get('/tracking/camp-1/report')
+        .expect(200);
+      expect(res.body.campaign.id).toBe('camp-1');
+      expect(svc.getReport).toHaveBeenCalledWith(TEST_USER_ID, 'camp-1');
+    });
+
+    it('404 when campaign not found or not owned', async () => {
+      svc.getReport.mockRejectedValueOnce(new NotFoundException());
+      await request(app.getHttpServer())
+        .get('/tracking/nonexistent/report')
+        .expect(404);
+    });
+  });
+
+  describe('POST /tracking/:campaignId/share', () => {
+    it('201 creates a share link', async () => {
+      svc.createShareLink.mockResolvedValueOnce({
+        id: 'link-1',
+        token: 'tok-1',
+        expiresAt: null,
+        lastViewedAt: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+      const res = await request(app.getHttpServer())
+        .post('/tracking/camp-1/share')
+        .expect(201);
+      expect(res.body.token).toBe('tok-1');
+      expect(svc.createShareLink).toHaveBeenCalledWith(TEST_USER_ID, 'camp-1');
+    });
+
+    it('404 when campaign not found', async () => {
+      svc.createShareLink.mockRejectedValueOnce(new NotFoundException());
+      await request(app.getHttpServer())
+        .post('/tracking/nonexistent/share')
+        .expect(404);
+    });
+  });
+
+  describe('GET /tracking/:campaignId/share', () => {
+    it('200 lists active share links', async () => {
+      svc.listShareLinks.mockResolvedValueOnce([
+        { id: 'link-1', token: 'tok-1', expiresAt: null, lastViewedAt: null, createdAt: '2026-01-01T00:00:00.000Z' },
+      ]);
+      const res = await request(app.getHttpServer())
+        .get('/tracking/camp-1/share')
+        .expect(200);
+      expect(res.body).toHaveLength(1);
+      expect(svc.listShareLinks).toHaveBeenCalledWith(TEST_USER_ID, 'camp-1');
+    });
+
+    it('404 when campaign not found', async () => {
+      svc.listShareLinks.mockRejectedValueOnce(new NotFoundException());
+      await request(app.getHttpServer())
+        .get('/tracking/nonexistent/share')
+        .expect(404);
+    });
+  });
+
+  describe('DELETE /tracking/share/:linkId', () => {
+    it('200 revokes a share link', async () => {
+      svc.revokeShareLink.mockResolvedValueOnce({ revoked: true });
+      const res = await request(app.getHttpServer())
+        .delete('/tracking/share/link-1')
+        .expect(200);
+      expect(res.body).toEqual({ revoked: true });
+      expect(svc.revokeShareLink).toHaveBeenCalledWith(TEST_USER_ID, 'link-1');
+    });
+
+    it('404 when share link not found', async () => {
+      svc.revokeShareLink.mockRejectedValueOnce(new NotFoundException());
+      await request(app.getHttpServer())
+        .delete('/tracking/share/nonexistent')
+        .expect(404);
     });
   });
 
