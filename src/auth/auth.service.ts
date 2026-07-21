@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
@@ -10,7 +11,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { SelectRoleDto } from './dto/select-role.dto';
+import { SelectRoleDto, SELF_SELECTABLE_ROLES } from './dto/select-role.dto';
 import { EmailService } from '../email/email.service';
 
 interface OAuthUserPayload {
@@ -150,6 +151,14 @@ export class AuthService {
   }
 
   async selectRole(userId: string, dto: SelectRoleDto) {
+    // Re-check at the write path rather than trusting the DTO alone: this is the
+    // only place role is set from user input, and a privileged value reaching it
+    // is a privilege-escalation bug, not a validation slip. Mirrors the
+    // route-guard + service re-check pairing in ClientBrandsService.
+    if (!SELF_SELECTABLE_ROLES.includes(dto.role)) {
+      throw new ForbiddenException('That role cannot be self-assigned');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
