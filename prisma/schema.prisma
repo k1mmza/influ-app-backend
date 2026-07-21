@@ -11,10 +11,15 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ADMIN is provisioned out of band (prisma/scripts/promote-admin.ts) and is
+// deliberately NOT self-selectable — see SELF_SELECTABLE_ROLES in
+// src/auth/dto/select-role.dto.ts. Adding a value here alone would otherwise
+// make it assignable via POST /auth/select-role.
 enum UserRole {
   AGENCY
   BRAND
   INFLUENCER
+  ADMIN
 }
 
 enum Gender {

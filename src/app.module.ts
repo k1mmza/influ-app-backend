@@ -20,6 +20,7 @@ import { DraftsModule } from './drafts/drafts.module';
 import { PaymentsModule } from './payments/payments.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { ClientBrandsModule } from './client-brands/client-brands.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { ClientBrandsModule } from './client-brands/client-brands.module';
     PaymentsModule,
     TrackingModule,
     ClientBrandsModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

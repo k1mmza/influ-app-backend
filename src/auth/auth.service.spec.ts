@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
@@ -409,5 +414,46 @@ describe('AuthService', () => {
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
+  });
+
+  describe('selectRole', () => {
+    // ADMIN exists in the UserRole enum but must never be reachable through the
+    // signup flow. The DTO blocks it at the edge; this covers the service-level
+    // re-check, i.e. the case where a caller reaches the service directly.
+    it('rejects ADMIN even for a user who has not selected a role', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        isRoleSelected: false,
+      });
+
+      await expect(
+        service.selectRole('u1', { role: UserRole.ADMIN }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([UserRole.BRAND, UserRole.AGENCY, UserRole.INFLUENCER])(
+      'allows %s to be self-selected',
+      async (role) => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'u1',
+          isRoleSelected: false,
+        });
+        // selectRole uses the callback form of $transaction; the shared mock is
+        // an array pass-through for the other suites, so supply a tx here.
+        const tx = {
+          user: { update: jest.fn().mockResolvedValue({ id: 'u1', role }) },
+          brandProfile: { create: jest.fn() },
+          agencyProfile: { create: jest.fn() },
+          influencerProfile: { create: jest.fn() },
+        };
+        prisma.$transaction.mockImplementation((cb: any) => cb(tx));
+
+        await expect(service.selectRole('u1', { role })).resolves.toBeDefined();
+        expect(tx.user.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ role }) }),
+        );
+      },
+    );
   });
 });
