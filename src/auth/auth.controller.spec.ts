@@ -179,6 +179,17 @@ describe('AuthController', () => {
         .expect(400);
     });
 
+    // Privilege escalation: ADMIN is a real member of the UserRole enum, so
+    // this would have passed @IsEnum(UserRole) validation and promoted the
+    // caller. It must be rejected at the pipe, before reaching the service.
+    it('400 on ADMIN — not self-assignable', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/select-role')
+        .send({ role: 'ADMIN' })
+        .expect(400);
+      expect(svc.selectRole).not.toHaveBeenCalled();
+    });
+
     it('400 on missing role', async () => {
       await request(app.getHttpServer())
         .post('/auth/select-role')
