@@ -2,6 +2,8 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
@@ -9,7 +11,8 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { SelectRoleDto } from './dto/select-role.dto';
+import { SelectRoleDto, SELF_SELECTABLE_ROLES } from './dto/select-role.dto';
+import { EmailService } from '../email/email.service';
 
 interface OAuthUserPayload {
   oauthProvider: string;
@@ -28,12 +31,15 @@ export interface SessionMeta {
 // stored account signed in for days. See POST /auth/refresh.
 const ACCESS_TOKEN_TTL = '15m';
 const REFRESH_TOKEN_TTL_DAYS = 30;
+// Password-reset links are short-lived; the frontend copy states 30 minutes.
+const RESET_TOKEN_TTL_MINUTES = 30;
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private email: EmailService,
   ) {}
 
   async register(dto: RegisterDto, meta?: SessionMeta) {
@@ -145,6 +151,14 @@ export class AuthService {
   }
 
   async selectRole(userId: string, dto: SelectRoleDto) {
+    // Re-check at the write path rather than trusting the DTO alone: this is the
+    // only place role is set from user input, and a privileged value reaching it
+    // is a privilege-escalation bug, not a validation slip. Mirrors the
+    // route-guard + service re-check pairing in ClientBrandsService.
+    if (!SELF_SELECTABLE_ROLES.includes(dto.role)) {
+      throw new ForbiddenException('That role cannot be self-assigned');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -264,6 +278,95 @@ export class AuthService {
     return { success: true };
   }
 
+  // ─── Password reset ───────────────────────────────────────────────────────────
+
+  /**
+   * Begin a password reset. ALWAYS returns the same generic response, whether or
+   * not the email maps to an account — no account-enumeration leak. A reset email
+   * is sent only for an active, password-based account. OAuth-only accounts
+   * (password === null) and soft-deleted accounts get the generic response with
+   * NO email sent: reset does not silently grant a password to a Google-only
+   * account (that would be a separate, deliberate feature).
+   */
+  async forgotPassword(email: string) {
+    const generic = { success: true };
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user || user.isDeleted || !user.password) {
+      return generic;
+    }
+
+    // Invalidate any outstanding tokens for this user so only the latest link
+    // works. Then mint a fresh single-use token; only its hash is persisted.
+    const rawToken = this.generateRawResetToken();
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.deleteMany({
+        where: { userId: user.id, usedAt: null },
+      }),
+      this.prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: this.hashResetToken(rawToken),
+          expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000),
+        },
+      }),
+    ]);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
+    await this.email.sendPasswordResetEmail(user.email, resetLink, user.name);
+
+    return generic;
+  }
+
+  /**
+   * Complete a password reset. The action only ever targets the userId stored on
+   * the valid token row — a user id is never accepted from the client. A token is
+   * usable exactly once: rejected if unknown, expired, already used, or if its
+   * user was soft-deleted. On success the password is re-hashed, the token is
+   * marked used, and ALL of the user's active sessions are revoked.
+   */
+  async resetPassword(rawToken: string, newPassword: string) {
+    const tokenHash = this.hashResetToken(rawToken);
+
+    const record = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: { select: { id: true, isDeleted: true } } },
+    });
+
+    if (
+      !record ||
+      record.usedAt ||
+      record.expiresAt <= new Date() ||
+      !record.user ||
+      record.user.isDeleted
+    ) {
+      // Single generic message — don't distinguish expired/used/unknown.
+      throw new BadRequestException(
+        'This password reset link is invalid or has expired.',
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: record.userId },
+        data: { password: hashedPassword },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+      // Force re-login everywhere after a password change.
+      this.prisma.session.updateMany({
+        where: { userId: record.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return { success: true };
+  }
+
   // ─── Token helpers ──────────────────────────────────────────────────────────
 
   private async issueTokens(userId: string, email: string, meta?: SessionMeta) {
@@ -293,6 +396,16 @@ export class AuthService {
   }
 
   private hashRefreshToken(raw: string) {
+    return crypto.createHash('sha256').update(raw).digest('hex');
+  }
+
+  private generateRawResetToken() {
+    // High-entropy opaque token — returned to the user only inside the emailed
+    // link and never persisted or logged; only its SHA-256 hash lives in the DB.
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  private hashResetToken(raw: string) {
     return crypto.createHash('sha256').update(raw).digest('hex');
   }
 

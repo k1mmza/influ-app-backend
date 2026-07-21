@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import request from 'supertest';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -11,6 +12,8 @@ const svc = {
   selectRole: jest.fn(),
   refresh: jest.fn(),
   logout: jest.fn(),
+  forgotPassword: jest.fn(),
+  resetPassword: jest.fn(),
 };
 
 async function buildApp(jwtMock: object) {
@@ -20,6 +23,10 @@ async function buildApp(jwtMock: object) {
   })
     .overrideGuard(JwtAuthGuard)
     .useValue(jwtMock)
+    // Throttling isn't the unit under test here; pass it through so we don't
+    // need ThrottlerModule's storage/options wired into the test module.
+    .overrideGuard(ThrottlerGuard)
+    .useValue({ canActivate: () => true })
     .compile();
   return initApp(module);
 }
@@ -172,6 +179,17 @@ describe('AuthController', () => {
         .expect(400);
     });
 
+    // Privilege escalation: ADMIN is a real member of the UserRole enum, so
+    // this would have passed @IsEnum(UserRole) validation and promoted the
+    // caller. It must be rejected at the pipe, before reaching the service.
+    it('400 on ADMIN — not self-assignable', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/select-role')
+        .send({ role: 'ADMIN' })
+        .expect(400);
+      expect(svc.selectRole).not.toHaveBeenCalled();
+    });
+
     it('400 on missing role', async () => {
       await request(app.getHttpServer())
         .post('/auth/select-role')
@@ -186,6 +204,63 @@ describe('AuthController', () => {
         .send({ role: 'BRAND' })
         .expect(401);
       await noAuthApp.close();
+    });
+  });
+
+  describe('POST /auth/forgot-password', () => {
+    it('201 and forwards the email to the service', async () => {
+      svc.forgotPassword.mockResolvedValueOnce({ success: true });
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'a@a.com' })
+        .expect(201)
+        .expect({ success: true });
+      expect(svc.forgotPassword).toHaveBeenCalledWith('a@a.com');
+    });
+
+    it('400 on a malformed email', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'not-an-email' })
+        .expect(400);
+      expect(svc.forgotPassword).not.toHaveBeenCalled();
+    });
+
+    it('400 on missing email', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({})
+        .expect(400);
+    });
+  });
+
+  describe('POST /auth/reset-password', () => {
+    it('201 and forwards token + password to the service', async () => {
+      svc.resetPassword.mockResolvedValueOnce({ success: true });
+      await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ token: 'raw-token', password: 'newPassword1' })
+        .expect(201)
+        .expect({ success: true });
+      expect(svc.resetPassword).toHaveBeenCalledWith(
+        'raw-token',
+        'newPassword1',
+      );
+    });
+
+    it('400 on a too-short password', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ token: 'raw-token', password: '123' })
+        .expect(400);
+      expect(svc.resetPassword).not.toHaveBeenCalled();
+    });
+
+    it('400 on missing token', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ password: 'newPassword1' })
+        .expect(400);
     });
   });
 });

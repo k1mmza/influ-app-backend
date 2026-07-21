@@ -1,14 +1,20 @@
 import { Module } from '@nestjs/common';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
     PassportModule,
+    // Rate limiting for the password-reset endpoints (per-route @Throttle
+    // overrides this default). Same per-module pattern used by tracking/campaigns.
+    ThrottlerModule.forRoot([{ ttl: 900_000, limit: 10 }]),
+    EmailModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'super-secret-key-change-me-later',
       // Access tokens are now short-lived; longevity comes from the refresh

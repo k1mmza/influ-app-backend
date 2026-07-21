@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
   ValidateNested,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -29,7 +30,7 @@ export class UpdateCampaignDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUrl()
   coverImageUrl?: string;
 
   @ApiPropertyOptional({ description: 'PUBLIC or PRIVATE (not enforced by validation — free string in the schema).' })
