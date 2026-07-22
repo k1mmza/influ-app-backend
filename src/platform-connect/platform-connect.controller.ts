@@ -97,6 +97,21 @@ export class PlatformConnectController {
     }
   }
 
+  /** Manually sync the authenticated user's own connected platform accounts */
+  @ApiBearerAuth('jwt')
+  @ApiOperation({
+    summary: 'Manually sync my connected platform accounts',
+    description:
+      "On-demand sync of the authenticated influencer's connected accounts, bypassing the TTL schedule. Returns how many were synced.",
+  })
+  @ApiResponse({ status: 201, description: 'Sync run complete; returns { synced, total }.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid bearer token.', type: ErrorResponseDto })
+  @Post('sync')
+  @UseGuards(JwtAuthGuard)
+  async syncMine(@Request() req: any) {
+    return this.service.syncMyAccounts(req.user.userId);
+  }
+
   /** Unlink a platform account (clears tokens, keeps historical data) */
   @ApiBearerAuth('jwt')
   @ApiOperation({ summary: 'Disconnect a platform account', description: 'Clears stored OAuth tokens for the given platform; historical synced data is kept.' })

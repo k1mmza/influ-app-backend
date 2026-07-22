@@ -3,6 +3,7 @@ import {
   DefaultValuePipe,
   Get,
   ParseIntPipe,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { AdminService } from './admin.service';
+import { PlatformConnectService } from '../platform-connect/platform-connect.service';
 
 /**
  * The entire ADMIN privilege surface: two read-only endpoints.
@@ -37,7 +39,13 @@ import { AdminService } from './admin.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    // Sync is a write, so it lives on PlatformConnectService (which owns sync
+    // writes), not on the deliberately read-only AdminService. The controller
+    // is @Roles(ADMIN)-gated, so this platform-wide trigger stays admin-only.
+    private readonly platformConnect: PlatformConnectService,
+  ) {}
 
   @ApiOperation({
     summary: 'List all campaigns across every brand and agency',
@@ -64,5 +72,18 @@ export class AdminController {
   @Get('dashboard')
   getDashboard() {
     return this.adminService.getDashboard();
+  }
+
+  @ApiOperation({
+    summary: 'Trigger a platform-wide sync of all connected accounts',
+    description:
+      'Admin-only. Runs an on-demand sync across every connected platform account, bypassing the TTL schedule. Returns { synced, total }.',
+  })
+  @ApiResponse({ status: 201, description: 'Sync run complete.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid bearer token.', type: ErrorResponseDto })
+  @ApiResponse({ status: 403, description: 'Caller is not an ADMIN.', type: ErrorResponseDto })
+  @Post('sync')
+  triggerSync() {
+    return this.platformConnect.syncAllAccounts();
   }
 }

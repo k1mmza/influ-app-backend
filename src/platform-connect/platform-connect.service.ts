@@ -194,6 +194,54 @@ export class PlatformConnectService {
     );
   }
 
+  // ── 3b. On-demand manual sync ─────────────────────────────────────────────
+
+  /**
+   * Sync every connected account for ONE user, on demand. Backs the manual
+   * "Sync now" button on the influencer dashboard — it bypasses the TTL
+   * schedule. Only accounts with a refresh token are eligible (an unlinked
+   * account has nothing to pull with). Runs the syncs directly rather than
+   * through the BullMQ queue so the button works with or without Redis and can
+   * return a live count.
+   */
+  async syncMyAccounts(
+    userId: string,
+  ): Promise<{ synced: number; total: number }> {
+    const accounts = await this.prisma.platformAccount.findMany({
+      where: { influencer: { userId }, refreshToken: { not: null } },
+      select: { id: true },
+    });
+    return this.syncEach(accounts.map((a) => a.id));
+  }
+
+  /**
+   * Admin: sync every connected account platform-wide, on demand. Same direct
+   * path as syncMyAccounts — the caller is @Roles(ADMIN)-gated at the controller.
+   */
+  async syncAllAccounts(): Promise<{ synced: number; total: number }> {
+    const accounts = await this.prisma.platformAccount.findMany({
+      where: { refreshToken: { not: null } },
+      select: { id: true },
+    });
+    return this.syncEach(accounts.map((a) => a.id));
+  }
+
+  /** Run syncLinkedAccount over a set of accounts, tolerating per-account failure. */
+  private async syncEach(
+    ids: string[],
+  ): Promise<{ synced: number; total: number }> {
+    let synced = 0;
+    for (const id of ids) {
+      try {
+        await this.syncLinkedAccount(id);
+        synced++;
+      } catch (e: any) {
+        this.logger.error(`Manual sync failed for account ${id}: ${e.message}`);
+      }
+    }
+    return { synced, total: ids.length };
+  }
+
   // ── 4. Disconnect a platform ──────────────────────────────────────────────
 
   async disconnectPlatform(userId: string, platform: string): Promise<void> {
