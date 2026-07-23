@@ -131,7 +131,15 @@ export class ProfileService {
       }
 
       if (user.role === 'INFLUENCER' && dto.influencerProfile) {
-        const { rateCard, ...influencerFields } = dto.influencerProfile;
+        const { rateCard, mediaKitAudience, ...rest } = dto.influencerProfile;
+        // mediaKitAudience is a validated class instance; Prisma's Json input
+        // wants a plain object, so spread it into one when present.
+        const influencerFields: any = {
+          ...rest,
+          ...(mediaKitAudience !== undefined
+            ? { mediaKitAudience: { ...mediaKitAudience } }
+            : {}),
+        };
 
         // 2a. Upsert influencer profile
         const influencerProfile = await tx.influencerProfile.upsert({

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { extname } from 'path';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 
 // Two buckets, created manually in the Supabase dashboard (see the migration plan).
 // public-assets is world-readable (rendered on the unauthenticated share page +
@@ -33,8 +34,12 @@ export class StorageService {
       );
     }
     // Service-role key bypasses RLS; never expose it to the frontend.
+    // supabase-js eagerly constructs a Realtime client, which needs a global
+    // WebSocket — absent on Node < 22. We only use Storage, so hand it the `ws`
+    // implementation as the transport to satisfy construction (never connects).
     this.client = createClient(url, key, {
       auth: { persistSession: false },
+      realtime: { transport: WebSocket as unknown as never },
     });
     return this.client;
   }

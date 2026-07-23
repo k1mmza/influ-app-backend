@@ -2,6 +2,7 @@ import {
   IsOptional,
   IsString,
   IsArray,
+  IsBoolean,
   IsNumber,
   IsEnum,
   ValidateNested,
@@ -10,7 +11,20 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Gender } from '@prisma/client';
+import { Gender, ProfileVisibility } from '@prisma/client';
+
+// Self-reported media-kit audience. Persisted to InfluencerProfile.mediaKitAudience
+// (Json) and used only as a DISPLAY FALLBACK — synced platform data always wins.
+class MediaKitAudienceDto {
+  @ApiPropertyOptional() @IsOptional() @IsNumber() totalFollowers?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() averageViews?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() engagementRate?: number;
+  @ApiPropertyOptional() @IsOptional() @IsNumber() growthRate?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() gender?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() age?: string;
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() topCountries?: string[];
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() topCities?: string[];
+}
 
 class RateCardDto {
   @ApiPropertyOptional()
@@ -58,6 +72,21 @@ export class UpdateInfluencerProfileDto {
 
   @ApiPropertyOptional()
   @IsOptional() @IsString() availabilityStatus?: string;
+
+  @ApiPropertyOptional({ enum: ProfileVisibility })
+  @IsOptional() @IsEnum(ProfileVisibility) visibility?: ProfileVisibility;
+
+  @ApiPropertyOptional({ description: 'Receive message notifications.' })
+  @IsOptional() @IsBoolean() messageAlerts?: boolean;
+
+  @ApiPropertyOptional({ description: 'Receive campaign notifications (invitations, applications, drafts).' })
+  @IsOptional() @IsBoolean() campaignAlerts?: boolean;
+
+  @ApiPropertyOptional({ type: () => MediaKitAudienceDto, description: 'Self-reported audience (display fallback; synced data wins).' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MediaKitAudienceDto)
+  mediaKitAudience?: MediaKitAudienceDto;
 
   @ApiPropertyOptional()
   @IsOptional() @IsString() country?: string;

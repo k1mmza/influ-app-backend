@@ -13,6 +13,7 @@ import {
 } from '../sync/adapters/platform.adapter';
 import { AiAnalysisService, AiChannelAnalysis } from './ai-analysis.service';
 import { SmartSearchService } from './smart-search.service';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class InfluencersService {
@@ -27,7 +28,20 @@ export class InfluencersService {
     private instagram: InstagramAdapter,
     private aiAnalysis: AiAnalysisService,
     private smartSearch: SmartSearchService,
+    private storage: StorageService,
   ) {}
+
+  /**
+   * rateCardFileUrl is stored as a private bucket path. Callers that expose an
+   * influencer to the frontend must swap it for a short-lived signed URL (same
+   * treatment as ProfileService.getProfile), or the "View Full Rate Card" link
+   * 403s. Mutates the formatted influencer in place; safe on null/missing paths.
+   */
+  private async signRateCard(inf: any): Promise<void> {
+    if (inf?.rateCardFileUrl) {
+      inf.rateCardFileUrl = await this.storage.signPrivate(inf.rateCardFileUrl);
+    }
+  }
 
   async findAll(query: any) {
     if (query.q) {
@@ -267,6 +281,12 @@ export class InfluencersService {
       where.country = { equals: country, mode: 'insensitive' };
     }
 
+    // ── Visibility ───────────────────────────────────────────────────────────
+    // Only PUBLIC creators surface in Discover browse/search. UNLISTED creators
+    // stay reachable by direct profile link; PRIVATE creators are hidden here.
+    // External (URL-derived) profiles keep the PUBLIC default, so they still show.
+    where.visibility = 'PUBLIC';
+
     // ── Pagination ───────────────────────────────────────────────────────────
     // Default 15 per page (5 rows × 3 cols on the grid); clamp to a sane max.
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 15, 1), 60);
@@ -291,8 +311,13 @@ export class InfluencersService {
       this.prisma.influencerProfile.count({ where }),
     ]);
 
+    const data = influencers.map((inf) => this.formatInfluencer(inf));
+    // Swap each private rate-card path for a signed URL so the detail panel's
+    // "View Full Rate Card" link works from Discover/Shortlist/Campaigns too.
+    await Promise.all(data.map((inf) => this.signRateCard(inf)));
+
     return {
-      data: influencers.map((inf) => this.formatInfluencer(inf)),
+      data,
       total,
       page,
       limit,
@@ -615,13 +640,41 @@ export class InfluencersService {
     // Main account audience insight (first insight of the highest-follower account)
     const mainInsight = mainAccount?.audienceInsights?.[0] ?? null;
 
+    // Self-reported media-kit audience — DISPLAY FALLBACK ONLY. Synced platform
+    // data always takes precedence; these fill in only where synced data is absent.
+    const mk = (inf.mediaKitAudience as any) ?? {};
+
+    // Synced audience gender/age derived from the main account's insight.
+    let syncedGender: string | null = null;
+    if (mainInsight && (mainInsight.femalePct != null || mainInsight.malePct != null)) {
+      const parts: string[] = [];
+      if (mainInsight.femalePct != null) parts.push(`${Math.round(mainInsight.femalePct)}% F`);
+      if (mainInsight.malePct != null) parts.push(`${Math.round(mainInsight.malePct)}% M`);
+      syncedGender = parts.join(' / ') || null;
+    }
+    let syncedAge: string | null = null;
+    const ageDist = mainInsight?.ageDistribution;
+    if (ageDist && typeof ageDist === 'object') {
+      const top = Object.entries(ageDist as Record<string, number>).sort(
+        (a, b) => (b[1] ?? 0) - (a[1] ?? 0),
+      )[0];
+      if (top) syncedAge = String(top[0]).replace(/^age/i, '');
+    }
+    // Manual audience locations (countries + cities), used only when there is no
+    // synced per-platform country data to show.
+    const manualLocations: string[] = [
+      ...(Array.isArray(mk.topCountries) ? mk.topCountries : []),
+      ...(Array.isArray(mk.topCities) ? mk.topCities : []),
+    ];
+
     return {
       id: inf.id,
       handle: mainAccount?.handle ?? null,
       name: inf.user?.name || mainAccount?.displayName || 'Unknown',
       gender: inf.gender ?? null,
       platforms: sortedAccounts.map((p) => p.platform),
-      followers: mainAccount?.followers ?? 0,
+      // Synced follower count wins; fall back to the self-reported number.
+      followers: mainAccount?.followers || mk.totalFollowers || 0,
       followersByPlatform: sortedAccounts.reduce(
         (acc, p) => ({ ...acc, [p.platform]: p.followers }),
         {},
@@ -659,7 +712,7 @@ export class InfluencersService {
       subscribersGainedByPlatform,
       topCountriesByPlatform,
       audienceInsightsByPlatform,
-      engagementRate: mainAccount?.engagementRate ?? 0,
+      engagementRate: mainAccount?.engagementRate || mk.engagementRate || 0,
       category: Array.isArray(inf.categories)
         ? inf.categories[0]
         : inf.categories || 'lifestyle',
@@ -676,12 +729,17 @@ export class InfluencersService {
         country: inf.country ?? null,
         city: null,
         audienceCountryPercent: null,
-        averageViews: mainAccount?.avgViews ?? 0,
-        growthRate: inf.growthRate ?? 0,
+        // Synced values win; self-reported media-kit numbers are the fallback.
+        averageViews: mainAccount?.avgViews || mk.averageViews || 0,
+        growthRate: inf.growthRate || mk.growthRate || 0,
         qualityScore,
         audienceQualityScore: inf.audienceQualityScore ?? null,
         responseRate: inf.responseRate ?? 0,
         bio: inf.bio ?? null,
+        // Audience Snapshot summary — synced insight first, manual media-kit second.
+        audienceGender: syncedGender || mk.gender || null,
+        audienceAgeGroup: syncedAge || mk.age || null,
+        audienceTopLocations: manualLocations,
         // Main account analytics fields
         watchTimeMins: mainAccount?.watchTimeMins ?? null,
         avgViewDuration: mainAccount?.avgViewDuration ?? null,
@@ -699,7 +757,7 @@ export class InfluencersService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, viewerUserId?: string) {
     const influencer = await this.prisma.influencerProfile.findUnique({
       where: { id },
       include: {
@@ -708,7 +766,19 @@ export class InfluencersService {
         rateCards: true,
       },
     });
-    return influencer ? this.formatInfluencer(influencer) : null;
+    if (!influencer) return null;
+    // PRIVATE profiles are hidden on direct view too — only the owner (matched by
+    // the optional Bearer token) may fetch their own. UNLISTED stays viewable by
+    // direct link; PUBLIC is open.
+    if (
+      influencer.visibility === 'PRIVATE' &&
+      (!viewerUserId || influencer.userId !== viewerUserId)
+    ) {
+      return null;
+    }
+    const formatted = this.formatInfluencer(influencer);
+    await this.signRateCard(formatted);
+    return formatted;
   }
 
   async getClaimCandidates(influencerId: string): Promise<any[]> {

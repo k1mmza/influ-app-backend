@@ -131,6 +131,7 @@ export class CampaignsService {
         objective: dto.objective,
         budget: dto.budget,
         briefImageUrl: dto.briefImageUrl,
+        briefImageUrls: dto.briefImageUrl ? [dto.briefImageUrl] : [],
         visibility: dto.visibility,
         status: 'DRAFT',
         paymentType: dto.paymentType,
@@ -241,11 +242,16 @@ export class CampaignsService {
         ['reviewDate', campaign.reviewDate],
         ['paymentDate', campaign.paymentDate],
       ];
+      // Compare at UTC-day granularity: the UI is a date picker and echoes the
+      // stored value's UTC date back, so a re-sent unchanged day must never count
+      // as "earlier" just because the stored datetime carries a time-of-day.
+      const utcDay = (d: Date) =>
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
       for (const [field, current] of extendOnly) {
         const raw = dto[field] as string | undefined;
         if (raw === undefined) continue;
         const next = new Date(raw);
-        if (current && next.getTime() < current.getTime()) {
+        if (current && utcDay(next) < utcDay(current)) {
           violations.push(field);
         }
       }
@@ -338,6 +344,12 @@ export class CampaignsService {
   // Mirrors uploadCoverImage: owner-checked, single field write, and — like the
   // cover upload — intentionally bypasses the commercial-term edit-lock, since the
   // brief image is a private creator-facing reference, not a locked term.
+  // Max number of product/brief images allowed on a campaign gallery.
+  private static readonly MAX_BRIEF_IMAGES = 6;
+
+  // Appends a new image to the campaign's brief gallery (does NOT replace).
+  // briefImageUrl stays in sync with the first gallery element for the brief/
+  // smart-plan/public consumers that read a single reference image.
   async uploadBriefImage(
     userId: string,
     campaignId: string,
@@ -351,19 +363,48 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaign not found');
     this.assertCampaignOwnership(user, campaign);
 
+    if (campaign.briefImageUrls.length >= CampaignsService.MAX_BRIEF_IMAGES) {
+      throw new BadRequestException(
+        `A campaign can have at most ${CampaignsService.MAX_BRIEF_IMAGES} product images.`,
+      );
+    }
+
     // Public asset (shares the brief-images/ prefix with POST /smart-plan/brief-image).
     const objectPath = `brief-images/${this.storage.buildFilename(file.originalname)}`;
-    const briefImageUrl = await this.storage.uploadPublic(
+    const uploadedUrl = await this.storage.uploadPublic(
       objectPath,
       file.buffer,
       file.mimetype,
     );
-    const updated = await this.prisma.campaign.update({
+    const briefImageUrls = [...campaign.briefImageUrls, uploadedUrl];
+    return this.prisma.campaign.update({
       where: { id: campaignId },
-      data: { briefImageUrl },
+      data: { briefImageUrls, briefImageUrl: briefImageUrls[0] },
       include: { requirements: true, applications: true, clientBrand: true },
     });
-    await this.storage.deletePublicByUrl(campaign.briefImageUrl);
+  }
+
+  // Removes one image from the gallery and deletes the underlying object.
+  async deleteBriefImage(userId: string, campaignId: string, url: string) {
+    const user = await this.findUserWithProfiles(userId);
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId, deletedAt: null },
+      include: { clientBrand: true },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    this.assertCampaignOwnership(user, campaign);
+
+    if (!campaign.briefImageUrls.includes(url)) {
+      throw new NotFoundException('Image not found on this campaign');
+    }
+
+    const briefImageUrls = campaign.briefImageUrls.filter((u) => u !== url);
+    const updated = await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { briefImageUrls, briefImageUrl: briefImageUrls[0] ?? null },
+      include: { requirements: true, applications: true, clientBrand: true },
+    });
+    await this.storage.deletePublicByUrl(url);
     return updated;
   }
 
@@ -826,6 +867,7 @@ export class CampaignsService {
       brandLogoUrl: campaign.clientBrand?.logoUrl ?? null,
       coverImageUrl: campaign.coverImageUrl ?? null,
       briefImageUrl: campaign.briefImageUrl ?? null,
+      briefImageUrls: campaign.briefImageUrls ?? [],
 
       // ── review before fully public — delete any line to pull it from the
       //    public surface ──────────────────────────────────────────────────────

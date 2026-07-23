@@ -152,6 +152,21 @@ export class CampaignsController {
     return this.campaignsService.uploadBriefImage(req.user.userId, id, file);
   }
 
+  @ApiOperation({ summary: 'Delete a campaign brief/product image', description: 'Removes one image (by url) from the campaign brief gallery and deletes the stored object.' })
+  @ApiParam({ name: 'id' })
+  @ApiBody({ schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } })
+  @ApiResponse({ status: 200, description: 'Image removed; returns the updated campaign.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid bearer token.', type: ErrorResponseDto })
+  @ApiResponse({ status: 404, description: 'Campaign or image not found.', type: ErrorResponseDto })
+  @Delete(':id/brief-image')
+  deleteBriefImage(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body('url') url: string,
+  ) {
+    return this.campaignsService.deleteBriefImage(req.user.userId, id, url);
+  }
+
   @ApiOperation({ summary: 'Delete a campaign' })
   @ApiParam({ name: 'id' })
   @ApiResponse({ status: 200, description: 'Campaign deleted.' })

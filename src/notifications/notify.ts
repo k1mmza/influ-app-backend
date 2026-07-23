@@ -21,6 +21,26 @@ export async function notify(
   },
 ): Promise<void> {
   if (!input.userId) return; // no recipient user (e.g. external influencer) → skip
+
+  // Respect the recipient's notification preferences (Profile → Settings). Only
+  // creators have these; brand/agency recipients have no InfluencerProfile row and
+  // always receive. MESSAGE_* types honor messageAlerts; everything else (campaign
+  // invitations, applications, draft reviews) honors campaignAlerts.
+  try {
+    const prefs = await prisma.influencerProfile.findUnique({
+      where: { userId: input.userId },
+      select: { messageAlerts: true, campaignAlerts: true },
+    });
+    if (prefs) {
+      const isMessage = input.type.startsWith('MESSAGE');
+      const allowed = isMessage ? prefs.messageAlerts : prefs.campaignAlerts;
+      if (!allowed) return; // recipient opted out of this category
+    }
+  } catch (e: any) {
+    // Pref lookup failed — fall through and deliver rather than drop the notice.
+    logger.warn(`notify(${input.type}) pref check failed for user ${input.userId}: ${e.message}`);
+  }
+
   try {
     await prisma.notification.create({
       data: {

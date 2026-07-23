@@ -28,41 +28,50 @@ enum Gender {
   other
 }
 
+// Creator profile visibility. PUBLIC = discoverable in search/browse.
+// UNLISTED = hidden from Discover but reachable via a direct profile link.
+// PRIVATE = hidden from Discover.
+enum ProfileVisibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
 // USER & ACCOUNT MANAGEMENT
 model User {
-  id                   String    @id @default(uuid())
-  name                 String?
-  email                String    @unique
-  password             String?
-  oauthProvider        String?
-  oauthId              String?
-  role                 UserRole?
-  plan                 String?
-  profileCompleteness  Int       @default(0)
-  isRoleSelected       Boolean   @default(false)
-  avatarUrl            String?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  isDeleted            Boolean   @default(false)
+  id                  String    @id @default(uuid())
+  name                String?
+  email               String    @unique
+  password            String?
+  oauthProvider       String?
+  oauthId             String?
+  role                UserRole?
+  plan                String?
+  profileCompleteness Int       @default(0)
+  isRoleSelected      Boolean   @default(false)
+  avatarUrl           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  isDeleted           Boolean   @default(false)
 
   // Profiles
-  brandProfile              BrandProfile?
-  agencyProfile             AgencyProfile?
-  influencerProfile         InfluencerProfile?
-  claimedExternalProfiles   InfluencerProfile[] @relation("ClaimedProfile")
+  brandProfile            BrandProfile?
+  agencyProfile           AgencyProfile?
+  influencerProfile       InfluencerProfile?
+  claimedExternalProfiles InfluencerProfile[] @relation("ClaimedProfile")
 
   // User Related
-  wallet           Wallet?
-  sessions         Session[]
-  notifications    Notification[]
-  sentReviews      Review[]       @relation("ReviewsFrom")
-  receivedReviews  Review[]       @relation("ReviewsTo")
-  messages         Message[]
-  trackingShareLinks TrackingShareLink[]
-  campaignShareLinks CampaignShareLink[]
-  campaignShortlists CampaignShortlist[]
+  wallet                      Wallet?
+  sessions                    Session[]
+  notifications               Notification[]
+  sentReviews                 Review[]                     @relation("ReviewsFrom")
+  receivedReviews             Review[]                     @relation("ReviewsTo")
+  messages                    Message[]
+  trackingShareLinks          TrackingShareLink[]
+  campaignShareLinks          CampaignShareLink[]
+  campaignShortlists          CampaignShortlist[]
   campaignShortlistShareLinks CampaignShortlistShareLink[]
-  passwordResetTokens PasswordResetToken[]
+  passwordResetTokens         PasswordResetToken[]
 }
 
 // AUTH SESSIONS (refresh-token store for multi-account / silent-refresh)
@@ -119,7 +128,7 @@ model BrandProfile {
   updatedAt     DateTime @updatedAt
 
   // Relationship to ClientBrand if this brand profile is linked
-  clientBrand   ClientBrand?
+  clientBrand ClientBrand?
 }
 
 model AgencyProfile {
@@ -135,45 +144,53 @@ model AgencyProfile {
   updatedAt     DateTime @updatedAt
 
   // Relationships
-  clientBrands  ClientBrand[]
+  clientBrands ClientBrand[]
 }
 
 model InfluencerProfile {
-  id                  String   @id @default(uuid())
-  userId              String?  @unique
-  user                User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bio                 String?  @db.Text
-  gender              Gender?
-  categories          Json?    // e.g. ["beauty", "lifestyle"]
-  styleTags           Json?
-  keywords            Json?
-  hashtags            Json?
-  availabilityStatus  String?
-  responseRate        Float?
-  avgResponseTimeHrs  Int?
-  performanceScore      Float?
-  qualityScore          Float?
-  audienceQualityScore  Float?
-  growthRate            Float?
-  country             String?
-  updatedAt           DateTime @updatedAt
+  id                   String   @id @default(uuid())
+  userId               String?  @unique
+  user                 User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio                  String?  @db.Text
+  gender               Gender?
+  categories           Json? // e.g. ["beauty", "lifestyle"]
+  styleTags            Json?
+  keywords             Json?
+  hashtags             Json?
+  availabilityStatus   String?
+  // Creator-controlled settings (Profile → Settings)
+  visibility           ProfileVisibility @default(PUBLIC)
+  messageAlerts        Boolean           @default(true)
+  campaignAlerts       Boolean           @default(true)
+  // Self-reported media-kit audience (headline numbers + audience breakdown).
+  // Display fallback only: synced platform data always takes precedence.
+  // Shape: { totalFollowers, averageViews, engagementRate, growthRate, gender, age, topCountries[], topCities[] }
+  mediaKitAudience     Json?
+  responseRate         Float?
+  avgResponseTimeHrs   Int?
+  performanceScore     Float?
+  qualityScore         Float?
+  audienceQualityScore Float?
+  growthRate           Float?
+  country              String?
+  updatedAt            DateTime @updatedAt
 
   // Sync metadata
-  syncStatus        String    @default("IDLE")  // IDLE | SYNCING
-  lastSyncedAt      DateTime?
-  nextRefreshAt     DateTime?
+  syncStatus    String    @default("IDLE") // IDLE | SYNCING
+  lastSyncedAt  DateTime?
+  nextRefreshAt DateTime?
 
   // Rate card file (PDF or image uploaded by the influencer)
-  rateCardFileUrl   String?
+  rateCardFileUrl String?
 
   // External profile (created from URL search, not self-registered)
-  isExternal        Boolean   @default(false)
-  externalHandle    String?
+  isExternal     Boolean @default(false)
+  externalHandle String?
 
   // Claim & merge
-  claimed           Boolean   @default(false)
-  claimedByUserId   String?
-  claimedBy         User?     @relation("ClaimedProfile", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  claimed         Boolean @default(false)
+  claimedByUserId String?
+  claimedBy       User?   @relation("ClaimedProfile", fields: [claimedByUserId], references: [id], onDelete: SetNull)
 
   // Influencer Related
   platformAccounts   PlatformAccount[]
@@ -211,23 +228,23 @@ model ClientBrand {
   joinedAt       DateTime       @default(now())
 
   // Relationships
-  campaigns      Campaign[]
-  shortlists     Shortlist[]
-  conversations  Conversation[]
-  payments       Payment[]
+  campaigns     Campaign[]
+  shortlists    Shortlist[]
+  conversations Conversation[]
+  payments      Payment[]
 }
 
 // USER RELATED
 model Wallet {
-  id                String   @id @default(uuid())
-  userId            String   @unique
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  balance           Float    @default(0)
-  pendingPayout     Float    @default(0)
-  totalEarned       Float    @default(0)
+  id                String    @id @default(uuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance           Float     @default(0)
+  pendingPayout     Float     @default(0)
+  totalEarned       Float     @default(0)
   lastPaymentAmount Float?
   lastPaymentAt     DateTime?
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime  @updatedAt
 }
 
 model Notification {
@@ -244,34 +261,34 @@ model Notification {
 
 // INFLUENCER RELATED
 model PlatformAccount {
-  id                String            @id @default(uuid())
-  influencerId      String
-  influencer        InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
-  platform          String            // tiktok, instagram, etc.
-  handle            String
-  displayName       String?
-  avatarUrl         String?
-  profileUrl        String?
-  followers         Int               @default(0)
-  avgViews          Int               @default(0)
-  engagementRate    Float             @default(0)
-  growthRate        Float             @default(0)
-  isPrimary         Boolean           @default(false)
-  syncedAt          DateTime          @default(now())
-  spotlightVideoId       String?
-  spotlightVideoTitle    String?
-  spotlightThumbnailUrl  String?
+  id                    String            @id @default(uuid())
+  influencerId          String
+  influencer            InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  platform              String // tiktok, instagram, etc.
+  handle                String
+  displayName           String?
+  avatarUrl             String?
+  profileUrl            String?
+  followers             Int               @default(0)
+  avgViews              Int               @default(0)
+  engagementRate        Float             @default(0)
+  growthRate            Float             @default(0)
+  isPrimary             Boolean           @default(false)
+  syncedAt              DateTime          @default(now())
+  spotlightVideoId      String?
+  spotlightVideoTitle   String?
+  spotlightThumbnailUrl String?
 
   // OAuth tokens (set when influencer connects their account)
-  channelId         String?
-  accessToken       String?   @db.Text
-  refreshToken      String?   @db.Text
-  tokenExpiry       DateTime?
+  channelId    String?
+  accessToken  String?   @db.Text
+  refreshToken String?   @db.Text
+  tokenExpiry  DateTime?
 
   // Set true when the tracking sync finds this connection unusable (revoked/
   // expired refresh token, or missing the video.list scope on TikTok). The UI
   // reads this to prompt the influencer to reconnect. Cleared on a good sync.
-  needsReauth       Boolean   @default(false)
+  needsReauth Boolean @default(false)
 
   // YouTube Analytics fields (populated via yt-analytics.readonly)
   watchTimeMins     Float?
@@ -307,29 +324,29 @@ model RateCard {
 }
 
 model SubmittedContent {
-  id              String              @id @default(uuid())
-  applicationId   String
-  application     CampaignApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  contentUrl      String
-  thumbnailUrl    String?
-  contentType     String?             // video, image, etc.
+  id            String              @id @default(uuid())
+  applicationId String
+  application   CampaignApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  contentUrl    String
+  thumbnailUrl  String?
+  contentType   String? // video, image, etc.
   // Phase 2 content metadata (static per-content facts, set once):
   //   title       — bridged from Draft.title at approval (all content, no sync)
   //   publishedAt — true on-platform publish date, captured during platform sync
   //                 (YouTube snippet.publishedAt / TikTok create_time). Null until
   //                 a sync populates it; non-synced content (e.g. Instagram) stays
   //                 null and the report falls back to the "Approved" date.
-  title           String?
-  publishedAt     DateTime?
-  reviewStatus    String              @default("PENDING")
-  revisionNote    String?             @db.Text
-  submittedAt     DateTime            @default(now())
-  reviewedAt      DateTime?
+  title         String?
+  publishedAt   DateTime?
+  reviewStatus  String              @default("PENDING")
+  revisionNote  String?             @db.Text
+  submittedAt   DateTime            @default(now())
+  reviewedAt    DateTime?
 
   // Bridge to the live Draft approval flow: an approved Draft produces exactly
   // one SubmittedContent (null for legacy/seeded rows with no originating draft).
-  draftId         String?             @unique
-  draft           Draft?              @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  draftId String? @unique
+  draft   Draft?  @relation(fields: [draftId], references: [id], onDelete: SetNull)
 
   // Relationships
   trackingResults TrackingResult[]
@@ -377,56 +394,57 @@ model PastCollaboration {
 }
 
 model Campaign {
-  id             String          @id @default(uuid())
+  id             String      @id @default(uuid())
   clientBrandId  String
-  clientBrand    ClientBrand     @relation(fields: [clientBrandId], references: [id])
+  clientBrand    ClientBrand @relation(fields: [clientBrandId], references: [id])
   name           String
   objective      String?
   budget         Float?
-  budgetSpent    Float           @default(0)
-  coverImageUrl  String?         // uploaded campaign cover banner (served from /uploads/campaign-covers)
-  briefImageUrl  String?         // reference image shown to the creator in the conversation brief (served from /uploads/brief-images) — distinct from the public coverImageUrl banner, not fed to AI generation
-  visibility     String?         // PUBLIC, PRIVATE
-  status         String          @default("DRAFT")
+  budgetSpent    Float       @default(0)
+  coverImageUrl  String? // uploaded campaign cover banner (served from /uploads/campaign-covers)
+  briefImageUrl  String? // primary reference image (mirrors briefImageUrls[0]) shown in the conversation brief (served from /uploads/brief-images) — distinct from the public coverImageUrl banner, not fed to AI generation
+  briefImageUrls String[]    @default([]) // full product/brief image gallery; briefImageUrl stays in sync with the first element
+  visibility     String? // PUBLIC, PRIVATE
+  status         String      @default("DRAFT")
   paymentType    String?
-  keyMessage     String?         @db.Text
-  doAndDont      String?         @db.Text
-  deliverables   String?         @db.Text
+  keyMessage     String?     @db.Text
+  doAndDont      String?     @db.Text
+  deliverables   String?     @db.Text
   applyDeadline  DateTime?
   submissionDate DateTime?
   reviewDate     DateTime?
   paymentDate    DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
   deletedAt      DateTime?
 
   // Relationships
-  requirements       CampaignRequirement[]
-  applications       CampaignApplication[]
-  smartPlanBriefs    SmartPlanBrief[]
-  trackingResults    TrackingResult[]
-  trackingShareLinks TrackingShareLink[]
-  campaignShareLinks CampaignShareLink[]
+  requirements                CampaignRequirement[]
+  applications                CampaignApplication[]
+  smartPlanBriefs             SmartPlanBrief[]
+  trackingResults             TrackingResult[]
+  trackingShareLinks          TrackingShareLink[]
+  campaignShareLinks          CampaignShareLink[]
   campaignShortlists          CampaignShortlist[]
   campaignShortlistShareLinks CampaignShortlistShareLink[]
-  reviews            Review[]
-  pastCollaborations PastCollaboration[]
-  conversations      Conversation[]
-  payments           Payment[]
+  reviews                     Review[]
+  pastCollaborations          PastCollaboration[]
+  conversations               Conversation[]
+  payments                    Payment[]
 }
 
 model CampaignRequirement {
-  id                 String   @id @default(uuid())
-  campaignId         String
-  campaign           Campaign @relation(fields: [campaignId], references: [id])
-  minFollowers       Int?
-  minEngagementRate  Float?
-  minAvgViews        Int?
-  platforms          Json?
-  locations          Json?
-  categories         Json?
-  followerTier       String?
-  contentType        String?
+  id                String   @id @default(uuid())
+  campaignId        String
+  campaign          Campaign @relation(fields: [campaignId], references: [id])
+  minFollowers      Int?
+  minEngagementRate Float?
+  minAvgViews       Int?
+  platforms         Json?
+  locations         Json?
+  categories        Json?
+  followerTier      String?
+  contentType       String?
 }
 
 model CampaignApplication {
@@ -456,15 +474,15 @@ model CampaignApplication {
 
 model SmartPlanBrief {
   id              String    @id @default(uuid())
-  campaignId      String?                                    // optional — brief may exist before a campaign is chosen
+  campaignId      String? // optional — brief may exist before a campaign is chosen
   campaign        Campaign? @relation(fields: [campaignId], references: [id])
-  createdBy       String                                     // User ID (foreign key kept as bare String to avoid migration churn)
+  createdBy       String // User ID (foreign key kept as bare String to avoid migration churn)
   requirementJson Json?
-  strategy        String?   @db.Text                        // generated strategy section
-  concept         String?   @db.Text                        // generated concept section
-  briefBody       String?   @db.Text                        // generated creator brief section
-  generatedBrief  String?   @db.Text                        // legacy — kept for backward compat
-  inputMode       String?                                    // AI | MANUAL
+  strategy        String?   @db.Text // generated strategy section
+  concept         String?   @db.Text // generated concept section
+  briefBody       String?   @db.Text // generated creator brief section
+  generatedBrief  String?   @db.Text // legacy — kept for backward compat
+  inputMode       String? // AI | MANUAL
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }
@@ -477,7 +495,7 @@ model TrackingResult {
   influencer         InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   submittedContentId String
   submittedContent   SubmittedContent  @relation(fields: [submittedContentId], references: [id], onDelete: Cascade)
-  snapshotPeriod     String?           // DAILY, WEEKLY, etc.
+  snapshotPeriod     String? // DAILY, WEEKLY, etc.
   views              Int               @default(0)
   likes              Int               @default(0)
   comments           Int               @default(0)
@@ -579,25 +597,25 @@ model CampaignShortlistShareLink {
 
 // COMMUNICATION
 model Conversation {
-  id            String            @id @default(uuid())
-  campaignId    String
-  campaign      Campaign          @relation(fields: [campaignId], references: [id])
-  clientBrandId String
-  clientBrand   ClientBrand       @relation(fields: [clientBrandId], references: [id])
-  influencerId  String
-  influencer    InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  id                   String            @id @default(uuid())
+  campaignId           String
+  campaign             Campaign          @relation(fields: [campaignId], references: [id])
+  clientBrandId        String
+  clientBrand          ClientBrand       @relation(fields: [clientBrandId], references: [id])
+  influencerId         String
+  influencer           InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
   workPhase            String?
-  brandPhaseReady      Boolean  @default(false)
-  influencerPhaseReady Boolean  @default(false)
-  contractUrl     String?
-  briefFileUrl    String?
-  paymentProofUrl String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  brandPhaseReady      Boolean           @default(false)
+  influencerPhaseReady Boolean           @default(false)
+  contractUrl          String?
+  briefFileUrl         String?
+  paymentProofUrl      String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
 
   // Relationships
-  messages        Message[]
-  drafts          Draft[]
+  messages Message[]
+  drafts   Draft[]
 }
 
 // Conversation-scoped content drafts. Created/edited by the influencer; reviewed
@@ -610,9 +628,9 @@ model Draft {
   // DRAFT | SUBMITTED | APPROVED | REVISION_REQUESTED (bare String — no enum migration)
   status         String       @default("DRAFT")
   notes          String?      @db.Text // influencer's detail/description
-  fileUrl        String?                // uploaded pdf/image via the conversations multer pipeline
-  linkUrl        String?                // external link alternative (Drive/YouTube/Frame.io)
-  contentType    String?                // pdf | image | video | link
+  fileUrl        String? // uploaded pdf/image via the conversations multer pipeline
+  linkUrl        String? // external link alternative (Drive/YouTube/Frame.io)
+  contentType    String? // pdf | image | video | link
   revisionNote   String?      @db.Text // brand's feedback when requesting changes
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -640,7 +658,7 @@ model ProfileEvent {
   id           String            @id @default(uuid())
   influencerId String
   influencer   InfluencerProfile @relation(fields: [influencerId], references: [id], onDelete: Cascade)
-  type         String            // VIEW | SEARCH | SAVE | CAMPAIGN
+  type         String // VIEW | SEARCH | SAVE | CAMPAIGN
   createdAt    DateTime          @default(now())
 
   @@index([influencerId, createdAt])
@@ -661,8 +679,8 @@ model Payment {
   // PAID is reachable only after the influencer confirms receipt (see PaymentsService).
   status         String            @default("PENDING")
   transactionRef String?
-  proofUrl       String?           // off-platform transfer proof, uploaded by brand/agency
-  confirmedAt    DateTime?         // set when the influencer confirms receipt
+  proofUrl       String? // off-platform transfer proof, uploaded by brand/agency
+  confirmedAt    DateTime? // set when the influencer confirms receipt
   paidAt         DateTime?
   createdAt      DateTime          @default(now())
 }

@@ -5,6 +5,7 @@ import {
   Query,
   Param,
   Body,
+  Req,
   BadRequestException,
   UseGuards,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { InfluencersService } from './influencers.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { InfluencerProfileResponseDto } from './dto/influencer-profile-response.dto';
 
@@ -115,12 +117,14 @@ export class InfluencersController {
 
   @ApiOperation({
     summary: 'Get an influencer profile by id',
-    description: 'Public — no authentication required. Returns null (200 OK) rather than a 404 if no profile matches the id.',
+    description:
+      'Optional auth. Returns null (200 OK) rather than a 404 if no profile matches the id. PRIVATE profiles return null to everyone except the owner (send a Bearer token to view your own).',
   })
   @ApiParam({ name: 'id' })
-  @ApiResponse({ status: 200, description: 'Influencer profile, or null if not found.', type: InfluencerProfileResponseDto })
+  @ApiResponse({ status: 200, description: 'Influencer profile, or null if not found / not visible.', type: InfluencerProfileResponseDto })
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.influencersService.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: any) {
+    return this.influencersService.findOne(id, req.user?.userId);
   }
 }
