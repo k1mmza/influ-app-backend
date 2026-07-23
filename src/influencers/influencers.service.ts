@@ -82,6 +82,7 @@ export class InfluencersService {
       stylePresent,
       availabilityStatus,
       country,
+      gender,
       audienceGender,
       audienceAgeGroup,
     } = query;
@@ -279,6 +280,15 @@ export class InfluencersService {
 
     if (country) {
       where.country = { equals: country, mode: 'insensitive' };
+    }
+
+    // ── Creator's own gender (InfluencerProfile.gender enum) ──────────────────
+    // Distinct from audienceGender above, which filters audience demographics.
+    if (gender && gender !== 'All') {
+      const g = (gender as string).toLowerCase();
+      if (g === 'male' || g === 'female' || g === 'other') {
+        where.gender = g;
+      }
     }
 
     // ── Visibility ───────────────────────────────────────────────────────────
