@@ -303,7 +303,11 @@ export class InfluencersService {
     const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const skip = (page - 1) * limit;
 
-    const [influencers, total] = await this.prisma.$transaction([
+    // Read-only list + count: run concurrently on separate pooled connections
+    // rather than in a single $transaction. Pagination totals don't need a
+    // consistent snapshot, and avoiding the BEGIN/COMMIT round-trips matters when
+    // the DB is far from the app (each round-trip is a full WAN hop).
+    const [influencers, total] = await Promise.all([
       this.prisma.influencerProfile.findMany({
         where,
         include: {
