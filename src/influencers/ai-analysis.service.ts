@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { YoutubeTranscript } from 'youtube-transcript';
+import { extractFirstJson } from '../common/extract-json';
+
+/** Cheapest current-gen Gemini model — fits these lightweight JSON tasks. */
+const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 export interface AiChannelAnalysis {
   bio: string;
@@ -51,15 +55,15 @@ export const VALID_TAGS = [...CATEGORY_TAGS, ...STYLE_TAGS];
 @Injectable()
 export class AiAnalysisService {
   private readonly logger = new Logger(AiAnalysisService.name);
-  private readonly client: Anthropic | null;
+  private readonly client: GoogleGenAI | null;
 
   constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
-      this.client = new Anthropic({ apiKey });
+      this.client = new GoogleGenAI({ apiKey });
     } else {
       this.logger.warn(
-        'ANTHROPIC_API_KEY not set — AI analysis will be skipped',
+        'GEMINI_API_KEY not set — AI analysis will be skipped',
       );
       this.client = null;
     }
@@ -112,21 +116,19 @@ ${context}
 Respond with valid JSON only. No markdown fences, no explanation.`;
 
     try {
-      const message = await this.client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }],
+      const response = await this.client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          maxOutputTokens: 512,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        },
       });
 
-      const raw =
-        message.content[0].type === 'text'
-          ? message.content[0].text.trim()
-          : '';
-      const json = raw
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '')
-        .trim();
-      const parsed = JSON.parse(json) as {
+      const raw = response.text ?? '';
+      // JSON mode can append stray trailing chars — slice out the first complete object
+      const parsed = JSON.parse(extractFirstJson(raw)) as {
         bio?: string;
         tags?: unknown;
         category?: string;
@@ -207,21 +209,19 @@ ${context}
 Respond with valid JSON only. No markdown fences, no explanation.`;
 
     try {
-      const message = await this.client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }],
+      const response = await this.client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          maxOutputTokens: 512,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        },
       });
 
-      const raw =
-        message.content[0].type === 'text'
-          ? message.content[0].text.trim()
-          : '';
-      const json = raw
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '')
-        .trim();
-      const parsed = JSON.parse(json) as {
+      const raw = response.text ?? '';
+      // JSON mode can append stray trailing chars — slice out the first complete object
+      const parsed = JSON.parse(extractFirstJson(raw)) as {
         bio?: string;
         tags?: unknown;
         category?: string;
@@ -310,13 +310,16 @@ ${trimmed.substring(0, 12000)}
 Respond with valid JSON only.`;
 
     try {
-      const message = await this.client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 600,
-        messages: [{ role: 'user', content: prompt }],
+      const response = await this.client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          maxOutputTokens: 1024,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        },
       });
-      const raw =
-        message.content[0].type === 'text' ? message.content[0].text : '';
+      const raw = response.text ?? '';
       const parsed = this.parseJsonResponse(raw);
       return parsed && typeof parsed === 'object'
         ? (parsed as Record<string, unknown>)
@@ -327,15 +330,10 @@ Respond with valid JSON only.`;
     }
   }
 
-  /** Strip optional ```json fences and parse. Returns null on malformed JSON. */
+  /** Extract the first complete JSON object and parse. Returns null on malformed JSON. */
   private parseJsonResponse(raw: string): unknown {
-    const json = raw
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '')
-      .trim();
     try {
-      return JSON.parse(json);
+      return JSON.parse(extractFirstJson(raw));
     } catch {
       return null;
     }

@@ -1,7 +1,7 @@
 /**
  * End-to-end verification for the Smart Plan feature.
  * Real HTTP against :3001 + real DB reads (Prisma). The /generate path hits the
- * live Anthropic API (ANTHROPIC_API_KEY is set) — kept to 2 haiku calls.
+ * live Gemini API (GEMINI_API_KEY is set) — kept to 2 model calls.
  * NOT product code. Run: npx ts-node --transpile-only test/smart-plan.e2e-verify.ts
  */
 import { PrismaClient } from '@prisma/client';

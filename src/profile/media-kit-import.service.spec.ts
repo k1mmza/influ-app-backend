@@ -2,7 +2,7 @@
  * TEST PLAN — MediaKitImportService (AI media-kit import, review-and-confirm)
  * ==========================================================================
  * Plain unit tests, direct instantiation, AiAnalysisService hand-mocked so the
- * real Anthropic API is NEVER hit. The whole feature's safety rule is the
+ * real Gemini API is NEVER hit. The whole feature's safety rule is the
  * proposed/claimedMetrics firewall — most cases assert it directly.
  *
  * TC-01: JSON maps known self-reported keys, ignores unknown ones

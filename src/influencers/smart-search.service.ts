@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { CATEGORY_TAGS, STYLE_TAGS } from './ai-analysis.service';
+import { extractFirstJson } from '../common/extract-json';
+
+/** Cheapest current-gen Gemini model — fits this lightweight JSON task. */
+const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 export interface ParsedFilters {
   platforms?: string[];
@@ -24,24 +29,26 @@ export interface ParsedFilters {
 export class SmartSearchService {
   private readonly logger = new Logger(SmartSearchService.name);
   private readonly MAX_CATEGORIES = 3;
+  private readonly client: GoogleGenAI | null;
+
+  constructor() {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      this.client = new GoogleGenAI({ apiKey });
+    } else {
+      this.logger.warn(
+        'GEMINI_API_KEY not set — smart search will return empty filters',
+      );
+      this.client = null;
+    }
+  }
 
   async parseQuery(query: string): Promise<ParsedFilters> {
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY!,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5',
-          max_tokens: 256,
-          temperature: 0,
-          // Filter object is flat (no nested {}), so the first '}' closes it.
-          // Stopping there discards any trailing prose the model may add.
-          stop_sequences: ['}'],
-          system: `You convert a natural-language influencer-search query into a JSON filter object.
+    if (!this.client) return {};
+
+    // Gemini's JSON mode (responseMimeType) returns a raw object directly, so the
+    // old Anthropic prefill-'{' + stop-sequence-'}' trick is no longer needed.
+    const systemInstruction = `You convert a natural-language influencer-search query into a JSON filter object.
 Return ONLY the raw JSON object — no markdown, no code fences, no prose.
 
 Rules:
@@ -86,32 +93,28 @@ Query: "influencers on linkedin"
 {}
 
 Query: "asdfgh hello random text 12345"
-{}`,
-          messages: [
-            {
-              role: 'user',
-              content: `Parse this search query into filters: "${query}"`,
-            },
-            // Prefill the assistant turn with '{' to force a raw JSON object
-            // (haiku-4-5 supports prefill). We re-prepend it before parsing.
-            {
-              role: 'assistant',
-              content: '{',
-            },
-          ],
-        }),
+{}`;
+
+    try {
+      const response = await this.client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: `Parse this search query into filters: "${query}"`,
+        config: {
+          systemInstruction,
+          temperature: 0,
+          maxOutputTokens: 256,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        },
       });
 
-      const data = await response.json();
-      // Assistant turn was prefilled with '{' and generation stops at '}',
-      // so wrap the completion back into a complete object before parsing.
-      const completion = data.content?.[0]?.text ?? '';
-      const parsed = JSON.parse(`{${completion}}`);
+      const completion = extractFirstJson(response.text ?? '{}');
+      const parsed = JSON.parse(completion || '{}');
       this.logger.log(`Smart search parsed: ${JSON.stringify(parsed)}`);
       return parsed;
     } catch (err) {
       this.logger.error(
-        `Claude parsing failed, returning empty filters (query="${query}")`,
+        `Gemini parsing failed, returning empty filters (query="${query}")`,
         err,
       );
       return {};

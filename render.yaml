@@ -95,7 +95,7 @@ services:
         value: "false"
 
       # --- AI (Smart Plan / analysis / smart search) -----------------------
-      - key: ANTHROPIC_API_KEY       # SECRET — required for Smart Plan + AI search; feature-level
+      - key: GEMINI_API_KEY          # SECRET — required for Smart Plan + AI search; feature-level
         sync: false                  #          failure (not boot) if missing.
 
       # --- Google login + YouTube connect ----------------------------------

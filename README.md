@@ -42,9 +42,9 @@ GOOGLE_CALLBACK_URL="http://localhost:3001/auth/google/callback"
 # Get from console.cloud.google.com → APIs & Services → Credentials
 YOUTUBE_API_KEY="****"
 
-# ── Anthropic API ─────────────────────────────────────────────────────────────
-# Get from console.anthropic.com
-ANTHROPIC_API_KEY="sk-ant-****"
+# ── Gemini API ────────────────────────────────────────────────────────────────
+# Get from aistudio.google.com/apikey
+GEMINI_API_KEY="AIza****"
 
 # ── Apify (TikTok & Instagram scraping) ──────────────────────────────────────
 # Get from apify.com → Settings → Integrations

@@ -5,9 +5,8 @@
 - **ORM:** Prisma (PostgreSQL)
 - **Queue:** BullMQ + Redis
 - **Auth:** JWT + Google OAuth (Passport.js)
-- **AI:** Anthropic Claude API
-  - Fast tasks: `claude-haiku-4-5-20251001`
-  - Complex tasks: `claude-sonnet-4-6`
+- **AI:** Google Gemini API (`@google/genai`)
+  - Model: `gemini-3.1-flash-lite` (Smart Plan, AI analysis, smart search)
 
 ## Project Structure
 ```

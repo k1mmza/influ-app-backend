@@ -5,7 +5,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { extractFirstJson } from '../common/extract-json';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CampaignsService } from '../campaigns/campaigns.service';
@@ -16,6 +17,9 @@ import {
   CreateFromPlanDto,
   PlanCampaignFields,
 } from './dto/create-from-plan.dto';
+
+/** Cheapest current-gen Gemini model — fits these lightweight JSON tasks. */
+const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 export interface GeneratedBrief {
   strategy: string;
@@ -36,19 +40,19 @@ export interface GeneratePlanResult extends GeneratedBrief {
 @Injectable()
 export class SmartPlanService {
   private readonly logger = new Logger(SmartPlanService.name);
-  private readonly client: Anthropic | null;
+  private readonly client: GoogleGenAI | null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly campaignsService: CampaignsService,
   ) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
-      this.client = new Anthropic({ apiKey });
+      this.client = new GoogleGenAI({ apiKey });
     } else {
       this.logger.warn(
-        'ANTHROPIC_API_KEY not set — Smart Plan generation unavailable',
+        'GEMINI_API_KEY not set — Smart Plan generation unavailable',
       );
       this.client = null;
     }
@@ -104,22 +108,22 @@ CRITICAL RULES:
 - Use null for any value you cannot confidently infer. Do not fabricate.`;
 
     try {
-      const message = await this.client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 3000, // raised from 1500 to fit the larger campaignFields JSON without truncation
-        messages: [{ role: 'user', content: prompt }],
+      const response = await this.client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          // 4096 gives the larger campaignFields JSON headroom over minimal thinking overhead
+          maxOutputTokens: 4096,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        },
       });
 
-      const raw =
-        message.content[0].type === 'text'
-          ? message.content[0].text.trim()
-          : '{}';
-      const json = raw
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, '')
-        .trim();
-
-      const parsed = JSON.parse(json) as Partial<GeneratePlanResult>;
+      const raw = response.text ?? '{}';
+      // JSON mode can append stray trailing chars — slice out the first complete object
+      const parsed = JSON.parse(
+        extractFirstJson(raw),
+      ) as Partial<GeneratePlanResult>;
 
       const rawFields = parsed.campaignFields ?? {};
       // name is mandatory — fall back so a later create never fails on a null name
