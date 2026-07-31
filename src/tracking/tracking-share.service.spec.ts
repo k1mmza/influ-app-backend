@@ -64,10 +64,12 @@ const SNAPSHOTS = [
   },
 ];
 
-function makeService(overrides: {
-  shareLink?: any;
-  campaign?: any;
-} = {}) {
+function makeService(
+  overrides: {
+    shareLink?: any;
+    campaign?: any;
+  } = {},
+) {
   const prisma: any = {
     submittedContent: { findMany: jest.fn().mockResolvedValue(CONTENTS) },
     trackingResult: { findMany: jest.fn().mockResolvedValue(SNAPSHOTS) },
@@ -90,7 +92,13 @@ function makeService(overrides: {
   const campaigns: any = {
     getCampaign: jest.fn().mockResolvedValue(CAMPAIGN),
   };
-  const service = new TrackingService(prisma, campaigns, {} as any, {} as any);
+  const service = new TrackingService(
+    prisma,
+    {} as any,
+    campaigns,
+    {} as any,
+    {} as any,
+  );
   return Object.assign(service, { __prisma: prisma, __campaigns: campaigns });
 }
 

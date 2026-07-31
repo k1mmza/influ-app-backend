@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { TokenCryptoService } from '../common/crypto/token-crypto.service';
 import { YouTubeStrategy } from './strategies/youtube.strategy';
 import { TikTokStrategy } from './strategies/tiktok.strategy';
 import { InstagramStrategy } from './strategies/instagram.strategy';
@@ -27,6 +28,7 @@ export class PlatformConnectService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly tokenCrypto: TokenCryptoService,
     private readonly youtube: YouTubeStrategy,
     private readonly tiktok: TikTokStrategy,
     private readonly instagram: InstagramStrategy,
@@ -136,17 +138,21 @@ export class PlatformConnectService {
     const strat = this.strategies.get(account.platform);
     if (!strat) return;
 
-    let accessToken = account.accessToken!;
+    // Tokens are stored encrypted at rest — decrypt before use.
+    const refreshToken = this.tokenCrypto.decrypt(account.refreshToken);
+    let accessToken = account.accessToken
+      ? this.tokenCrypto.decrypt(account.accessToken)
+      : '';
     const fiveMin = new Date(Date.now() + 5 * 60 * 1000);
 
     if (!account.tokenExpiry || account.tokenExpiry < fiveMin) {
       try {
-        const refreshed = await strat.refreshAccessToken(account.refreshToken);
+        const refreshed = await strat.refreshAccessToken(refreshToken);
         accessToken = refreshed.accessToken;
         await this.prisma.platformAccount.update({
           where: { id: platformAccountId },
           data: {
-            accessToken: refreshed.accessToken,
+            accessToken: this.tokenCrypto.encrypt(refreshed.accessToken),
             tokenExpiry: refreshed.expiry,
           },
         });
@@ -176,7 +182,7 @@ export class PlatformConnectService {
 
     const currentTokens: PlatformTokens = {
       accessToken,
-      refreshToken: account.refreshToken,
+      refreshToken,
       expiry: account.tokenExpiry ?? new Date(Date.now() + 3600 * 1000),
     };
 
@@ -274,7 +280,7 @@ export class PlatformConnectService {
       avgViews: channel.avgViews,
       engagementRate: channel.engagementRate,
       channelId: channel.platformUserId,
-      accessToken: tokens.accessToken,
+      accessToken: this.tokenCrypto.encrypt(tokens.accessToken),
       tokenExpiry: tokens.expiry,
       syncedAt: new Date(),
       // A successful (re)connect/sync persisted fresh tokens — this account is
@@ -294,7 +300,8 @@ export class PlatformConnectService {
       }),
     };
 
-    if (tokens.refreshToken) data.refreshToken = tokens.refreshToken;
+    if (tokens.refreshToken)
+      data.refreshToken = this.tokenCrypto.encrypt(tokens.refreshToken);
 
     let account: any;
     if (existingAccountId) {

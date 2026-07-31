@@ -90,8 +90,14 @@ function makeService(
     fetchVideoStats: jest.fn().mockResolvedValue(new Map()),
     refreshAccessToken: jest.fn(),
   };
+  // Identity crypto so token values flow through unchanged in assertions.
+  const tokenCrypto: any = {
+    encrypt: (v: string) => v,
+    decrypt: (v: string) => v,
+  };
   const service = new TrackingService(
     prisma,
+    tokenCrypto,
     campaignsService,
     youtube,
     tiktok,
@@ -415,11 +421,23 @@ describe('TrackingService', () => {
         new Map([
           [
             'dQw4w9WgXcQ',
-            { views: 100, likes: 5, comments: 1, thumbnailUrl: 'http://new.jpg', publishedAt: '2026-06-20T10:00:00Z' },
+            {
+              views: 100,
+              likes: 5,
+              comments: 1,
+              thumbnailUrl: 'http://new.jpg',
+              publishedAt: '2026-06-20T10:00:00Z',
+            },
           ],
           [
             'AAAAAAAAAAA',
-            { views: 200, likes: 9, comments: 2, thumbnailUrl: 'http://fresh.jpg', publishedAt: '2026-06-21T10:00:00Z' },
+            {
+              views: 200,
+              likes: 9,
+              comments: 2,
+              thumbnailUrl: 'http://fresh.jpg',
+              publishedAt: '2026-06-21T10:00:00Z',
+            },
           ],
         ]),
       ),
@@ -658,9 +676,14 @@ describe('TrackingService.getReport', () => {
     // Extreme numbers that would "win" any average — proves suppression is about
     // COUNT, not value: with one item, avg === value so the badge is meaningless.
     const snaps = [snap('sc1', { views: 999, engagementRate: 99 })];
-    const svc: any = makeService(snaps, camp([{ status: 'ACCEPTED' }]), undefined, {
-      candidates: contents,
-    });
+    const svc: any = makeService(
+      snaps,
+      camp([{ status: 'ACCEPTED' }]),
+      undefined,
+      {
+        candidates: contents,
+      },
+    );
     const report = await svc.getReport('u-1', 'camp-1');
     expect(report.content).toHaveLength(1);
     expect(report.content[0].synced).toBe(true);
@@ -676,9 +699,14 @@ describe('TrackingService.getReport', () => {
       snap('C', { views: 200, engagementRate: 3 }), // views only  -> trending
       snap('D', { views: 60, engagementRate: 9 }), //  ER only     -> high_engagement
     ];
-    const svc: any = makeService(snaps, camp([{ status: 'ACCEPTED' }]), undefined, {
-      candidates: contents,
-    });
+    const svc: any = makeService(
+      snaps,
+      camp([{ status: 'ACCEPTED' }]),
+      undefined,
+      {
+        candidates: contents,
+      },
+    );
     const report = await svc.getReport('u-1', 'camp-1');
     const byId = Object.fromEntries(
       report.content.map((c: any) => [c.id, c.badges]),
@@ -732,7 +760,11 @@ describe('TrackingService.getReport', () => {
     const snaps = [snap('p1'), snap('p2')];
     const svc: any = makeService(
       snaps,
-      camp([{ status: 'ACCEPTED' }, { status: 'PENDING' }, { status: 'REJECTED' }]),
+      camp([
+        { status: 'ACCEPTED' },
+        { status: 'PENDING' },
+        { status: 'REJECTED' },
+      ]),
       undefined,
       { candidates: contents },
     );
@@ -747,11 +779,19 @@ describe('TrackingService.getReport', () => {
     const contents = [
       content({ id: 'tt', contentUrl: 'https://tiktok.com/@x/video/mock1' }),
       content({ id: 'ig', contentUrl: 'https://instagram.com/p/abc' }),
-      content({ id: 'nope', contentUrl: 'https://drive.google.com/file/d/xyz' }),
+      content({
+        id: 'nope',
+        contentUrl: 'https://drive.google.com/file/d/xyz',
+      }),
     ];
-    const svc: any = makeService([], camp([{ status: 'ACCEPTED' }]), undefined, {
-      candidates: contents,
-    });
+    const svc: any = makeService(
+      [],
+      camp([{ status: 'ACCEPTED' }]),
+      undefined,
+      {
+        candidates: contents,
+      },
+    );
     const report = await svc.getReport('u-1', 'camp-1');
     const byId = Object.fromEntries(
       report.content.map((c: any) => [c.id, c.platform]),

@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { TokenCryptoService } from '../common/crypto/token-crypto.service';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { YouTubeStrategy } from '../platform-connect/strategies/youtube.strategy';
 import {
@@ -16,6 +17,7 @@ export class TrackingService {
 
   constructor(
     private prisma: PrismaService,
+    private tokenCrypto: TokenCryptoService,
     private campaigns: CampaignsService,
     private youtube: YouTubeStrategy,
     private tiktok: TikTokStrategy,
@@ -819,18 +821,19 @@ export class TrackingService {
 
       // Refresh an expired/near-expiry token, mirroring PlatformConnectService.
       // A failed refresh means the refresh token is revoked/expired -> re-auth.
-      let accessToken = account.accessToken;
+      // Tokens are stored encrypted at rest — decrypt before use.
+      let accessToken = this.tokenCrypto.decrypt(account.accessToken);
       const fiveMin = new Date(Date.now() + 5 * 60 * 1000);
       if (!account.tokenExpiry || account.tokenExpiry < fiveMin) {
         try {
           const refreshed = await this.tiktok.refreshAccessToken(
-            account.refreshToken,
+            this.tokenCrypto.decrypt(account.refreshToken),
           );
           accessToken = refreshed.accessToken;
           await this.prisma.platformAccount.update({
             where: { id: account.id },
             data: {
-              accessToken: refreshed.accessToken,
+              accessToken: this.tokenCrypto.encrypt(refreshed.accessToken),
               tokenExpiry: refreshed.expiry,
               needsReauth: false,
             },
