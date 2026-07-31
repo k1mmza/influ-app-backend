@@ -21,6 +21,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { ClientBrandsModule } from './client-brands/client-brands.module';
 import { AdminModule } from './admin/admin.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { AdminModule } from './admin/admin.module';
     TrackingModule,
     ClientBrandsModule,
     AdminModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
