@@ -19,8 +19,8 @@ ssh "$VPS" "docker run --rm --network $NET --env-file $REMOTE_DIR/.env \
     influ-app-backend npx prisma migrate status" || true
 
 echo
-echo "!! This applies pending migrations to the SHARED Supabase DB (affects"
-echo "!! Render too, since the database is shared). This is not reversible here."
+echo "!! This applies pending migrations to the SHARED Supabase DB. This is not"
+echo "!! reversible here."
 read -rp "Type MIGRATE to apply, anything else to abort: " ok
 [ "$ok" = "MIGRATE" ] || { echo "Aborted — no migrations applied."; exit 1; }
 

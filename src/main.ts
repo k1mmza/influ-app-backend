@@ -28,7 +28,7 @@ async function bootstrap() {
 
   if (process.env.SWAGGER_ENABLED === 'true') {
     // ponytail: version hardcoded, not read from package.json at runtime — dist/src/main.js
-    // vs source-level src/main.ts have different relative depths to package.json (render.yaml's
+    // vs source-level src/main.ts have different relative depths to package.json (the deploy
     // startCommand is `node dist/src/main.js`, and nest-cli has no assets copy step for
     // package.json), so require('../package.json') would 404 in production. Bump this string
     // by hand when package.json's "version" changes.

@@ -7,8 +7,12 @@ import { AppService } from './app.service';
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @ApiOperation({ summary: 'Health check', description: 'Public — no authentication required. Used as the Render deploy health check.' })
-  @ApiResponse({ status: 200, description: 'Service is up.' })
+  @ApiOperation({
+    summary: 'Liveness check',
+    description:
+      'Public — no authentication required. Returns 200 if the process is up. For a readiness check that also verifies the database and Redis, use GET /health.',
+  })
+  @ApiResponse({ status: 200, description: 'Process is up.' })
   @Get()
   getHello(): string {
     return this.appService.getHello();
