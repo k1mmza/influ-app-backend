@@ -59,16 +59,25 @@ export class ConversationsService {
     });
     if (!user) throw new NotFoundException('User not found');
 
+    // IMPORTANT: each branch must resolve to a concrete scoping id. Prisma strips
+    // `undefined` filter keys, so a `where` left as `{}` (e.g. a brand-new brand
+    // with no ClientBrand yet) would match EVERY conversation and leak other
+    // accounts' chats. Bail out with an empty list when the scope is unresolvable.
     const where: any = {};
     if (user.role === 'INFLUENCER') {
-      where.influencerId = user.influencerProfile?.id;
+      if (!user.influencerProfile?.id) return [];
+      where.influencerId = user.influencerProfile.id;
     } else if (user.role === 'BRAND') {
       const clientBrand = await this.prisma.clientBrand.findFirst({
         where: { brandProfileId: user.brandProfile?.id },
       });
-      where.clientBrandId = clientBrand?.id;
+      if (!clientBrand?.id) return [];
+      where.clientBrandId = clientBrand.id;
     } else if (user.role === 'AGENCY') {
-      where.clientBrand = { agencyId: user.agencyProfile?.id };
+      if (!user.agencyProfile?.id) return [];
+      where.clientBrand = { agencyId: user.agencyProfile.id };
+    } else {
+      return [];
     }
 
     const conversations = await this.prisma.conversation.findMany({
