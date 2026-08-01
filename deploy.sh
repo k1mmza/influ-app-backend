@@ -46,6 +46,16 @@ ssh "$VPS" "docker run -d --name influ-app-backend --network $NET \
     --env-file $REMOTE_DIR/.env \
     -p 127.0.0.1:$HOST_PORT:3001 --restart unless-stopped influ-app-backend"
 
-echo "==> Health check (internal)"
-ssh "$VPS" "sleep 3 && curl -sI http://127.0.0.1:$HOST_PORT/ | head -3"
+echo "==> Readiness check (internal) — GET /health verifies DB + Redis"
+# Probe the readiness endpoint, not GET / (liveness). --fail makes curl exit
+# non-zero on a 503, so `set -e` aborts the deploy if the container came up but
+# its gating dependencies (DB/Redis) are unreachable. Storage is reported in the
+# body (storage: up|down) but does not gate — a 200 with storage:down is healthy.
+# Retry a few times to absorb container warm-up.
+ssh "$VPS" "for i in 1 2 3 4 5; do \
+    if curl -fsS http://127.0.0.1:$HOST_PORT/health; then echo; exit 0; fi; \
+    echo \"  readiness not ready yet (attempt \$i), retrying...\"; sleep 3; \
+  done; \
+  echo 'ERROR: /health did not return 200 (DB or Redis unreachable) — see: docker logs influ-app-backend'; \
+  exit 1"
 echo "==> Done. Public URL (after Apache + cert): https://api.inflique.com"

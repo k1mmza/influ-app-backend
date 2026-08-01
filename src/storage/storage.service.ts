@@ -44,6 +44,24 @@ export class StorageService {
     return this.client;
   }
 
+  /**
+   * Cheap reachability probe for the readiness check (GET /health). Lists a
+   * single object from the public bucket — the smallest authenticated round-trip
+   * to Supabase Storage. Never throws: returns false on any error (missing env,
+   * network, auth) so the health endpoint can report `storage: down` without
+   * blowing up. This is a REPORT-only signal — it does not gate readiness.
+   */
+  async ping(): Promise<boolean> {
+    try {
+      const { error } = await this.getClient()
+        .storage.from(PUBLIC_BUCKET)
+        .list('', { limit: 1 });
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
   /** Preserves the historical filename scheme: `<ts>-<rand><ext>`, original name discarded. */
   buildFilename(originalName: string): string {
     const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
